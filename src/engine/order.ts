@@ -278,7 +278,8 @@ async function saveOrder(order: PaperOrder): Promise<void> {
   const pipeline = redis.pipeline();
   pipeline.hset(KEYS.ORDER(order.oid), data);
   if (order.cloid) {
-    pipeline.hset(KEYS.USER_CLOIDS(order.userId), order.cloid, order.oid.toString());
+    // Stored lowercase so orderStatus/cancelByCloid lookups are case-stable.
+    pipeline.hset(KEYS.USER_CLOIDS(order.userId), order.cloid.toLowerCase(), order.oid.toString());
   }
   await pipeline.exec();
 }
@@ -354,7 +355,7 @@ export async function cancelByCloid(
   const results: HlOrderResponseStatus[] = [];
 
   for (const cancel of cancels) {
-    const oidStr = await redis.hget(KEYS.USER_CLOIDS(userId), cancel.cloid);
+    const oidStr = await redis.hget(KEYS.USER_CLOIDS(userId), cancel.cloid.toLowerCase());
     if (!oidStr) {
       results.push({ error: `cloid ${cancel.cloid} not found` });
       continue;

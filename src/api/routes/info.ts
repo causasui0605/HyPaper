@@ -99,7 +99,20 @@ infoRouter.post('/', async (c) => {
       }
 
       case 'orderStatus': {
-        const status = await getOrderStatus(body.oid);
+        // HL API parity: `oid` may be a numeric order id OR a 0x-hex cloid.
+        // A cloid resolves through the per-user cloid index (same map
+        // cancelByCloid uses); an unknown cloid is unknownOid, as on HL.
+        let oid = body.oid;
+        if (typeof oid === 'string' && /^0x[0-9a-fA-F]{32}$/.test(oid)) {
+          if (!body.user) return c.json({ error: 'Missing user' }, 400);
+          const mapped = await redis.hget(
+            KEYS.USER_CLOIDS(String(body.user).toLowerCase()),
+            oid.toLowerCase(),
+          );
+          if (!mapped) return c.json({ status: 'unknownOid' });
+          oid = parseInt(mapped, 10);
+        }
+        const status = await getOrderStatus(oid);
         return c.json(status);
       }
 
