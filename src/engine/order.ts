@@ -12,7 +12,24 @@ import type { PaperOrder } from '../types/order.js';
 
 const matcher = new OrderMatcher(eventBus);
 
+const BUILDER_DEX_ASSET_BASE = 100_000;
+
+interface BuilderAssetEntry {
+  coin: string;
+  szDecimals: number;
+}
+
+async function builderAssetEntry(asset: number): Promise<BuilderAssetEntry | null> {
+  const raw = await redis.hget(KEYS.MARKET_ASSET_MAP, String(asset));
+  if (!raw) return null;
+  return JSON.parse(raw) as BuilderAssetEntry;
+}
+
 export async function resolveAssetCoin(asset: number): Promise<string | null> {
+  if (asset >= BUILDER_DEX_ASSET_BASE) {
+    const entry = await builderAssetEntry(asset);
+    return entry ? entry.coin : null;
+  }
   const metaRaw = await redis.get(KEYS.MARKET_META);
   if (!metaRaw) return null;
   const meta: HlMeta = JSON.parse(metaRaw);
@@ -21,6 +38,10 @@ export async function resolveAssetCoin(asset: number): Promise<string | null> {
 }
 
 export async function getAssetDecimals(asset: number): Promise<number> {
+  if (asset >= BUILDER_DEX_ASSET_BASE) {
+    const entry = await builderAssetEntry(asset);
+    return entry ? entry.szDecimals : 0;
+  }
   const metaRaw = await redis.get(KEYS.MARKET_META);
   if (!metaRaw) return 0;
   const meta: HlMeta = JSON.parse(metaRaw);

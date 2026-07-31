@@ -4,6 +4,9 @@ export const KEYS = {
   MARKET_CTX: (coin: string) => `market:ctx:${coin}`,
   MARKET_L2: (coin: string) => `market:l2:${coin}`,
   MARKET_META: 'market:meta',
+  //: builder-dex asset registry: field = wire asset id (>=100000),
+  //: value = JSON {coin, szDecimals}. Main-dex assets stay in MARKET_META.
+  MARKET_ASSET_MAP: 'market:assetmap',
 
   // User account
   USER_ACCOUNT: (userId: string) => `user:${userId}:account`,

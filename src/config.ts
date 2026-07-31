@@ -24,7 +24,16 @@ const envSchema = z.object({
   FEE_RATE_MAKER: z.string().default('0.0001'),
   FUNDING_ENABLED: z.coerce.boolean().default(true),
   FUNDING_INTERVAL_MS: z.coerce.number().default(28_800_000),
+  // Comma-separated builder-deployed perp dex names to mirror (e.g. "xyz").
+  // Empty = main dex only (upstream behavior unchanged).
+  EXTRA_DEXS: z.string().default(''),
+  // Poll interval for extra-dex metaAndAssetCtxs (mids/mark/funding refresh
+  // belt in addition to the per-dex allMids WS subscription).
+  EXTRA_DEX_CTX_REFRESH_MS: z.coerce.number().default(15_000),
 });
+
+export const extraDexList = (raw: string): string[] =>
+  raw.split(',').map((d) => d.trim()).filter((d) => d.length > 0);
 
 export const config = envSchema.parse(process.env);
 export type Config = z.infer<typeof envSchema>;
