@@ -37,6 +37,43 @@ function getCacheKey(body: Record<string, unknown>): string {
 // Endpoints proxied to real HL API
 const PROXIED_TYPES = new Set(Object.keys(PROXY_TTL));
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeMetaOnlyIsolated(meta: unknown): unknown {
+  if (!isRecord(meta) || !Array.isArray(meta.universe)) return meta;
+
+  let changed = false;
+  const universe = meta.universe.map((entry) => {
+    if (!isRecord(entry)) return entry;
+    if (Object.prototype.hasOwnProperty.call(entry, 'onlyIsolated')) return entry;
+    changed = true;
+    return { ...entry, onlyIsolated: false };
+  });
+  return changed ? { ...meta, universe } : meta;
+}
+
+/**
+ * Builder-dex upstream metadata omits `onlyIsolated` when the value is false.
+ * HyPaper exposes an explicit boolean so paper clients can bind margin posture
+ * without treating omission as an assumption. Malformed present values remain
+ * untouched so downstream validation can continue to fail closed.
+ */
+export function normalizeBuilderDexOnlyIsolated(
+  body: Record<string, unknown>,
+  data: unknown,
+): unknown {
+  if (typeof body.dex !== 'string' || body.dex.length === 0) return data;
+
+  if (body.type === 'meta') return normalizeMetaOnlyIsolated(data);
+  if (body.type !== 'metaAndAssetCtxs' || !Array.isArray(data) || data.length === 0) {
+    return data;
+  }
+  const [meta, ...assetCtxs] = data;
+  return [normalizeMetaOnlyIsolated(meta), ...assetCtxs];
+}
+
 infoRouter.post('/', async (c) => {
   const body = await c.req.json();
   const type: string = body.type;
@@ -147,7 +184,8 @@ async function cachedProxyToHL(c: any, body: Record<string, unknown>) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
+  const rawData = await res.json();
+  const data = normalizeBuilderDexOnlyIsolated(body, rawData);
 
   const ttl = PROXY_TTL[body.type as string] ?? DEFAULT_PROXY_TTL;
   proxyCache.set(key, { data, expiry: now + ttl });
