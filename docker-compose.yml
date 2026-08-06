@@ -20,6 +20,8 @@ services:
       - PORT=3000
       - DEFAULT_BALANCE=100000
       - LOG_LEVEL=info
+      - EXTRA_DEXS=${EXTRA_DEXS:-xyz}
+      - EXTRA_DEX_CTX_REFRESH_MS=${EXTRA_DEX_CTX_REFRESH_MS:-15000}
     restart: unless-stopped
     profiles:
       - prod
