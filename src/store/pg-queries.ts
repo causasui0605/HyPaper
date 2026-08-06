@@ -1,6 +1,6 @@
 import { desc, eq, and, gte, lte } from 'drizzle-orm';
 import { db } from './db.js';
-import { fills } from './schema.js';
+import { fills, orders } from './schema.js';
 import type { PaperFill } from '../types/order.js';
 
 export async function getUserFillsPg(userId: string, limit = 100): Promise<PaperFill[]> {
@@ -12,6 +12,18 @@ export async function getUserFillsPg(userId: string, limit = 100): Promise<Paper
     .limit(limit);
 
   return rows.map(rowToFill);
+}
+
+/** Read-only first-import guard; replay never writes programme rows to Postgres. */
+export async function getUserExecutionPresencePg(userId: string): Promise<{
+  orders: boolean;
+  fills: boolean;
+}> {
+  const [orderRows, fillRows] = await Promise.all([
+    db.select({ oid: orders.oid }).from(orders).where(eq(orders.userId, userId)).limit(1),
+    db.select({ tid: fills.tid }).from(fills).where(eq(fills.userId, userId)).limit(1),
+  ]);
+  return { orders: orderRows.length !== 0, fills: fillRows.length !== 0 };
 }
 
 export async function getUserFillsByTimePg(

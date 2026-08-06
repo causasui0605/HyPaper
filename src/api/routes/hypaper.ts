@@ -1,10 +1,20 @@
 import { Hono } from 'hono';
+import { ZodError } from 'zod';
 import { redis } from '../../store/redis.js';
 import { KEYS } from '../../store/keys.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { ensureAccount } from '../middleware/auth.js';
 import { upsertUser, updateUserBalance } from '../../store/pg-sink.js';
+import {
+  getHistoricalReplay,
+  HistoricalReplayError,
+  importHistoricalReplay,
+} from '../../engine/historical-replay.js';
+import {
+  getHistoricalReplayRequestSchema,
+  importHistoricalReplayRequestSchema,
+} from '../../types/historical-replay.js';
 
 export const hypaperRouter = new Hono();
 
@@ -21,6 +31,62 @@ hypaperRouter.post('/', async (c) => {
     return c.json({ error: 'Missing user' }, 400);
   }
   const normalizedUser = user.toLowerCase();
+
+  if (type === 'importHistoricalReplay' || type === 'getHistoricalReplay') {
+    if (!config.HISTORICAL_REPLAY_ENABLED) {
+      return c.json({
+        type: 'historicalReplay',
+        status: 'disabled',
+        paper: true,
+        synthetic: true,
+        historicalReplay: true,
+        historical_replay: true,
+        error: 'Historical replay is disabled on this host',
+      }, 403);
+    }
+    try {
+      if (type === 'importHistoricalReplay') {
+        const request = importHistoricalReplayRequestSchema.parse(body);
+        await ensureAccount(normalizedUser);
+        return c.json(await importHistoricalReplay(normalizedUser, request.replay));
+      }
+      const request = getHistoricalReplayRequestSchema.parse(body);
+      return c.json(await getHistoricalReplay(normalizedUser, request.batchId));
+    } catch (err) {
+      logger.warn({ err, type }, 'Historical replay refused');
+      if (err instanceof HistoricalReplayError) {
+        return c.json({
+          type: 'historicalReplay',
+          status: 'refused',
+          paper: true,
+          synthetic: true,
+          historicalReplay: true,
+          historical_replay: true,
+          error: err.message,
+        }, err.status);
+      }
+      if (err instanceof ZodError) {
+        return c.json({
+          type: 'historicalReplay',
+          status: 'refused',
+          paper: true,
+          synthetic: true,
+          historicalReplay: true,
+          historical_replay: true,
+          error: err.message,
+        }, 400);
+      }
+      return c.json({
+        type: 'historicalReplay',
+        status: 'error',
+        paper: true,
+        synthetic: true,
+        historicalReplay: true,
+        historical_replay: true,
+        error: err instanceof Error ? err.message : String(err),
+      }, 500);
+    }
+  }
 
   await ensureAccount(normalizedUser);
 

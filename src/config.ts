@@ -22,6 +22,9 @@ const envSchema = z.object({
   FEES_ENABLED: z.coerce.boolean().default(true),
   FEE_RATE_TAKER: z.string().default('0.00035'),
   FEE_RATE_MAKER: z.string().default('0.0001'),
+  // Sterile programme replay is deliberately unavailable unless the host opts in.
+  // Do not use z.coerce.boolean here: the string "false" is truthy in JavaScript.
+  HISTORICAL_REPLAY_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   FUNDING_ENABLED: z.coerce.boolean().default(true),
   FUNDING_INTERVAL_MS: z.coerce.number().default(28_800_000),
   // Comma-separated builder-deployed perp dex names to mirror (e.g. "xyz").

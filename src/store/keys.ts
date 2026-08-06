@@ -18,6 +18,12 @@ export const KEYS = {
   USER_FILLS: (userId: string) => `user:${userId}:fills`,
   USER_FUNDINGS: (userId: string) => `user:${userId}:fundings`,
 
+  // Replay audit data never enters ordinary order/fill/funding schemas.
+  HISTORICAL_REPLAY_INDEX: (userId: string) => `user:${userId}:hpr:index`,
+  HISTORICAL_REPLAY_BATCH: (userId: string, batchId: string) => `user:${userId}:hpr:batch:${batchId}`,
+  HISTORICAL_REPLAY_EVENTS: (userId: string, batchId: string) => `user:${userId}:hpr:events:${batchId}`,
+  HISTORICAL_REPLAY_EVENT: (userId: string, eventId: string) => `user:${userId}:hpr:event:${eventId}`,
+
   // Orders
   ORDER: (oid: number) => `order:${oid}`,
   ORDERS_OPEN: 'orders:open',

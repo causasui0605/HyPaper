@@ -4,6 +4,12 @@ import { RedisMock } from './helpers/redis-mock.js';
 import { KEYS } from '../store/keys.js';
 
 const redisMock = new RedisMock();
+const mockConfig = vi.hoisted(() => ({
+  DEFAULT_BALANCE: '10000',
+  LOG_LEVEL: 'silent',
+  HISTORICAL_REPLAY_ENABLED: false,
+  FEE_RATE_TAKER: '0.00035',
+}));
 
 vi.mock('../store/redis.js', () => ({
   redis: redisMock,
@@ -25,11 +31,14 @@ vi.mock('../store/pg-sink.js', () => ({
   updateUserBalance: vi.fn(async () => {}),
 }));
 
+vi.mock('../engine/historical-replay.js', () => ({
+  HistoricalReplayError: class HistoricalReplayError extends Error {},
+  importHistoricalReplay: vi.fn(),
+  getHistoricalReplay: vi.fn(),
+}));
+
 vi.mock('../config.js', () => ({
-  config: {
-    DEFAULT_BALANCE: '10000',
-    LOG_LEVEL: 'silent',
-  },
+  config: mockConfig,
 }));
 
 const { exchangeRouter } = await import('../api/routes/exchange.js');
@@ -38,6 +47,7 @@ const { hypaperRouter } = await import('../api/routes/hypaper.js');
 describe('route validation', () => {
   beforeEach(() => {
     redisMock.flushall();
+    mockConfig.HISTORICAL_REPLAY_ENABLED = false;
   });
 
   it('rejects NaN order sizes on /exchange', async () => {
@@ -243,5 +253,67 @@ describe('route validation', () => {
       balance: '123.45',
     });
     await expect(redisMock.hget(KEYS.USER_ACCOUNT('0xabc'), 'balance')).resolves.toBe('123.45');
+  });
+
+  it('refuses historical replay routes while the strict opt-in is disabled', async () => {
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+
+    for (const type of ['importHistoricalReplay', 'getHistoricalReplay']) {
+      const res = await app.request('/hypaper', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type, user: '0xabc', unexpected: true }),
+      });
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toMatchObject({
+        type: 'historicalReplay',
+        status: 'disabled',
+        paper: true,
+        synthetic: true,
+        historicalReplay: true,
+      });
+    }
+  });
+
+  it('strictly rejects extra status-route fields after opt-in', async () => {
+    mockConfig.HISTORICAL_REPLAY_ENABLED = true;
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'getHistoricalReplay',
+        user: '0xabc',
+        batchId: `hprb${'0'.repeat(64)}`,
+        oid: 7,
+      }),
+    });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      type: 'historicalReplay',
+      status: 'refused',
+      paper: true,
+      synthetic: true,
+      historicalReplay: true,
+    });
+  });
+
+  it('requires batchId on the opted-in historical replay status route', async () => {
+    mockConfig.HISTORICAL_REPLAY_ENABLED = true;
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'getHistoricalReplay', user: '0xabc' }),
+    });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      type: 'historicalReplay',
+      status: 'refused',
+      historicalReplay: true,
+    });
   });
 });
