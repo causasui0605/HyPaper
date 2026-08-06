@@ -8,21 +8,22 @@ import {
   calculatePositionUnrealizedPnl,
   calculatePositionMarginUsed,
   calculateLiquidationPrice,
+  calculateIsolatedLiquidationPrice,
+  getMarkPrice,
 } from './margin.js';
+import { getAssetMetadata } from './asset.js';
 import { abs, sub, mul, div, isZero, gt, D } from '../utils/math.js';
-import type { HlClearinghouseState, HlAssetPosition, HlMeta } from '../types/hl.js';
+import type { HlClearinghouseState, HlAssetPosition } from '../types/hl.js';
 
 export async function getClearinghouseState(userId: string): Promise<HlClearinghouseState> {
   const balance = await getBalance(userId);
   const positionAssets = await redis.smembers(KEYS.USER_POSITIONS(userId));
-  const mids = await redis.hgetall(KEYS.MARKET_MIDS);
-  const metaRaw = await redis.get(KEYS.MARKET_META);
-  const meta: HlMeta | null = metaRaw ? JSON.parse(metaRaw) : null;
 
   const assetPositions: HlAssetPosition[] = [];
   let totalNtlPos = '0';
   let totalMarginUsed = '0';
   let totalUnrealizedPnl = '0';
+  let totalMaintenanceMarginUsed = '0';
 
   for (const assetStr of positionAssets) {
     const asset = parseInt(assetStr, 10);
@@ -30,29 +31,41 @@ export async function getClearinghouseState(userId: string): Promise<HlClearingh
     if (!pos.szi || isZero(pos.szi)) continue;
 
     const coin = pos.coin;
-    const midPx = mids[coin];
-    if (!midPx) continue;
+    const markPx = await getMarkPrice(coin);
+    if (!markPx) throw new Error(`No finite positive mark price for ${coin}`);
 
     const lev = await redis.hgetall(KEYS.USER_LEV(userId, asset));
     const leverage = lev.leverage ? parseInt(lev.leverage, 10) : 20;
     const isCross = lev.isCross !== 'false';
 
-    const posValue = mul(abs(pos.szi), midPx);
-    const unrealizedPnl = calculatePositionUnrealizedPnl(pos.szi, pos.entryPx, midPx);
-    const marginUsed = await calculatePositionMarginUsed(userId, asset, pos.szi, midPx);
+    const posValue = mul(abs(pos.szi), markPx);
+    const unrealizedPnl = calculatePositionUnrealizedPnl(pos.szi, pos.entryPx, markPx);
+    const marginUsed = await calculatePositionMarginUsed(userId, asset, pos.szi, markPx);
+    const metadata = await getAssetMetadata(asset);
+    if (
+      !metadata?.maxLeverage
+      || !Number.isSafeInteger(metadata.maxLeverage)
+      || metadata.maxLeverage < 1
+    ) {
+      throw new Error(`Asset ${asset} has no valid maxLeverage metadata`);
+    }
+    const maxLeverage = metadata.maxLeverage;
 
     const accountValue = await calculateAccountValue(userId);
-    const liqPx = calculateLiquidationPrice(pos.szi, pos.entryPx, accountValue, leverage);
+    const liqPx = isCross
+      ? calculateLiquidationPrice(pos.szi, pos.entryPx, accountValue, leverage)
+      : calculateIsolatedLiquidationPrice(pos.szi, pos.entryPx, marginUsed, maxLeverage);
 
     const roe = isZero(marginUsed)
       ? '0'
       : div(unrealizedPnl, marginUsed);
 
-    const maxLeverage = meta?.universe[asset]?.maxLeverage ?? 50;
-
     totalNtlPos = D(totalNtlPos).plus(D(posValue)).toString();
     totalMarginUsed = D(totalMarginUsed).plus(D(marginUsed)).toString();
     totalUnrealizedPnl = D(totalUnrealizedPnl).plus(D(unrealizedPnl)).toString();
+    totalMaintenanceMarginUsed = D(totalMaintenanceMarginUsed)
+      .plus(D(posValue).div(D(maxLeverage).times(2)))
+      .toString();
 
     assetPositions.push({
       type: 'oneWay',
@@ -64,10 +77,9 @@ export async function getClearinghouseState(userId: string): Promise<HlClearingh
         unrealizedPnl,
         returnOnEquity: roe,
         liquidationPx: liqPx,
-        leverage: {
-          type: isCross ? 'cross' : 'isolated',
-          value: leverage,
-        },
+        leverage: isCross
+          ? { type: 'cross', value: leverage }
+          : { type: 'isolated', value: leverage, rawUsd: marginUsed },
         cumFunding: {
           allTime: pos.cumFunding ?? '0',
           sinceOpen: pos.cumFundingSinceOpen ?? '0',
@@ -96,7 +108,7 @@ export async function getClearinghouseState(userId: string): Promise<HlClearingh
       totalRawUsd: balance,
       totalMarginUsed,
     },
-    crossMaintenanceMarginUsed: div(totalMarginUsed, '2'),
+    crossMaintenanceMarginUsed: totalMaintenanceMarginUsed,
     withdrawable: gt(withdrawable, '0') ? withdrawable : '0',
     time: Date.now(),
   };

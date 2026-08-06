@@ -8,6 +8,7 @@ import { PriceUpdater } from './price-updater.js';
 import { OrderMatcher } from './order-matcher.js';
 import { FundingWorker } from './funding-worker.js';
 import type { HlMeta, HlAssetCtx } from '../types/hl.js';
+import { mainDexMarkSubscriptions } from '../engine/asset.js';
 
 export const eventBus = new EventEmitter();
 
@@ -34,12 +35,14 @@ export class Worker {
     logger.info('Starting worker...');
 
     // Fetch initial meta + prices from HL HTTP API
-    await this.seedMarketData();
+    const mainMeta = await this.seedMarketData();
 
     // Connect WebSocket and subscribe
     this.wsClient!.connect();
     this.wsClient!.subscribe({ type: 'allMids' });
-    this.wsClient!.subscribe({ type: 'activeAssetCtx' });
+    for (const subscription of mainDexMarkSubscriptions(mainMeta)) {
+      this.wsClient!.subscribe(subscription);
+    }
     for (const dex of extraDexList(config.EXTRA_DEXS)) {
       // Builder-deployed perp dex mids stream on the same channel, keyed by
       // the dex-prefixed coin names (e.g. "xyz:CL").
@@ -104,6 +107,8 @@ export class Worker {
       registry.hset(KEYS.MARKET_ASSET_MAP, String(wireAsset), JSON.stringify({
         coin: entry.name,
         szDecimals: entry.szDecimals,
+        maxLeverage: entry.maxLeverage,
+        onlyIsolated: entry.onlyIsolated === true,
       }));
       const ctx = assetCtxs[i];
       if (!ctx) continue;
@@ -126,7 +131,7 @@ export class Worker {
     logger.info({ dex, dexIndex, assets: dexMeta.universe.length }, 'Seeded builder dex');
   }
 
-  private async seedMarketData(): Promise<void> {
+  private async seedMarketData(): Promise<HlMeta> {
     try {
       // Fetch meta (universe info)
       const metaRes = await fetch(`${config.HL_API_URL}/info`, {
@@ -183,6 +188,7 @@ export class Worker {
       for (const dex of extraDexList(config.EXTRA_DEXS)) {
         await this.seedExtraDex(dex);
       }
+      return meta;
     } catch (err) {
       logger.error({ err }, 'Failed to seed market data');
       throw err;

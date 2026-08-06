@@ -22,6 +22,7 @@ vi.mock('../store/redis.js', () => {
 import { redis } from '../store/redis.js';
 import { KEYS } from '../store/keys.js';
 import { resolveAssetCoin, getAssetDecimals } from '../engine/order.js';
+import { getAssetMetadata, mainDexMarkSubscriptions } from '../engine/asset.js';
 
 const MAIN_META = JSON.stringify({
   universe: [
@@ -38,7 +39,12 @@ describe('builder-dex asset resolution', () => {
     await redis.hset(
       KEYS.MARKET_ASSET_MAP,
       '110029',
-      JSON.stringify({ coin: 'xyz:CL', szDecimals: 2 }),
+      JSON.stringify({
+        coin: 'xyz:CL',
+        szDecimals: 2,
+        maxLeverage: 20,
+        onlyIsolated: false,
+      }),
     );
   });
 
@@ -46,11 +52,23 @@ describe('builder-dex asset resolution', () => {
     expect(await resolveAssetCoin(0)).toBe('BTC');
     expect(await resolveAssetCoin(1)).toBe('ETH');
     expect(await getAssetDecimals(1)).toBe(4);
+    expect(await getAssetMetadata(0)).toEqual({
+      coin: 'BTC',
+      szDecimals: 5,
+      maxLeverage: 40,
+      onlyIsolated: undefined,
+    });
   });
 
   it('resolves a registered builder-dex wire asset', async () => {
     expect(await resolveAssetCoin(110029)).toBe('xyz:CL');
     expect(await getAssetDecimals(110029)).toBe(2);
+    expect(await getAssetMetadata(110029)).toEqual({
+      coin: 'xyz:CL',
+      szDecimals: 2,
+      maxLeverage: 20,
+      onlyIsolated: false,
+    });
   });
 
   it('refuses an unregistered builder-dex wire asset', async () => {
@@ -62,5 +80,25 @@ describe('builder-dex asset resolution', () => {
     // 100000 would previously fall off the end of meta.universe and return
     // null anyway, but must now consult the registry, not the main meta.
     expect(await resolveAssetCoin(100000)).toBeNull();
+  });
+
+  it('builds one coin-scoped mark subscription per main-dex asset', () => {
+    const meta = JSON.parse(MAIN_META);
+    expect(mainDexMarkSubscriptions(meta)).toEqual([
+      { type: 'activeAssetCtx', coin: 'BTC' },
+      { type: 'activeAssetCtx', coin: 'ETH' },
+    ]);
+  });
+
+  it('refuses malformed or duplicate main-dex mark subscriptions', () => {
+    expect(() => mainDexMarkSubscriptions({
+      universe: [{ name: '', szDecimals: 1, maxLeverage: 10 }],
+    })).toThrow('has no valid coin name');
+    expect(() => mainDexMarkSubscriptions({
+      universe: [
+        { name: 'BTC', szDecimals: 5, maxLeverage: 40 },
+        { name: 'BTC', szDecimals: 5, maxLeverage: 40 },
+      ],
+    })).toThrow('duplicate coin BTC');
   });
 });

@@ -106,6 +106,83 @@ describe('route validation', () => {
     });
   });
 
+  it('rejects non-string isolated-only target leverage on /exchange', async () => {
+    const app = new Hono();
+    app.route('/exchange', exchangeRouter);
+
+    const res = await app.request('/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        wallet: '0xabc',
+        action: {
+          type: 'topUpIsolatedOnlyMargin',
+          asset: 110001,
+          leverage: 3,
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      status: 'err',
+      response: 'topUpIsolatedOnlyMargin requires asset (integer), leverage (decimal string)',
+    });
+  });
+
+  it('accepts an isolated-only target leverage decimal string', async () => {
+    const asset = 110001;
+    const wallet = '0xabc';
+    await redisMock.hset(
+      KEYS.MARKET_ASSET_MAP,
+      asset.toString(),
+      JSON.stringify({
+        coin: 'xyz:NATGAS',
+        szDecimals: 1,
+        maxLeverage: 10,
+        onlyIsolated: true,
+      }),
+    );
+    await redisMock.hset(KEYS.MARKET_CTX('xyz:NATGAS'), 'markPx', '2.5');
+    await redisMock.hset(KEYS.USER_ACCOUNT(wallet), 'balance', '1000');
+    await redisMock.hset(
+      KEYS.USER_LEV(wallet, asset),
+      'leverage', '10',
+      'isCross', 'false',
+    );
+    await redisMock.hset(
+      KEYS.USER_POS(wallet, asset),
+      'coin', 'xyz:NATGAS',
+      'szi', '100',
+      'entryPx', '2.5',
+    );
+    await redisMock.sadd(KEYS.USER_POSITIONS(wallet), asset.toString());
+
+    const app = new Hono();
+    app.route('/exchange', exchangeRouter);
+    const res = await app.request('/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        wallet,
+        action: {
+          type: 'topUpIsolatedOnlyMargin',
+          asset,
+          leverage: '3',
+        },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      status: 'ok',
+      response: { type: 'default' },
+    });
+    await expect(
+      redisMock.hget(KEYS.USER_LEV(wallet, asset), 'isolatedMargin'),
+    ).resolves.toBe('83.3333333333333333333333333333');
+  });
+
   it('rejects NaN balances on /hypaper setBalance', async () => {
     const app = new Hono();
     app.route('/hypaper', hypaperRouter);

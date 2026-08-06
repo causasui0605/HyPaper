@@ -138,6 +138,7 @@ Mirrors [HL's exchange endpoint](https://hyperliquid.gitbook.io/hyperliquid-docs
 | `cancel` | Cancel orders by asset + oid |
 | `cancelByCloid` | Cancel orders by client order ID |
 | `updateLeverage` | Set leverage + cross/isolated for an asset |
+| `topUpIsolatedOnlyMargin` | Add isolated-only margin to a target effective leverage |
 
 **Example — place a limit buy:**
 

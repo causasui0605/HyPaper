@@ -1,0 +1,40 @@
+---
+title: Top Up Isolated-Only Margin
+description: Add isolated margin to target an effective leverage
+---
+
+<Note>
+  `POST /exchange`
+</Note>
+
+For an open position whose asset metadata declares `onlyIsolated`, add margin
+until the position reaches the requested effective leverage. The selected venue
+leverage remains unchanged.
+
+## Request body
+
+```json
+{
+  "wallet": "0xYourAddress",
+  "action": {
+    "type": "topUpIsolatedOnlyMargin",
+    "asset": 110001,
+    "leverage": "3"
+  }
+}
+```
+`asset` is the wire asset index. `leverage` is a finite positive decimal string
+no greater than the asset's metadata `maxLeverage`. The position must already be
+open and configured for isolated margin. This top-up action never removes
+margin; a target that would do so fails.
+
+## Response
+
+```json
+{
+  "status": "ok",
+  "response": {
+    "type": "default"
+  }
+}
+```

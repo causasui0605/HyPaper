@@ -18,12 +18,19 @@ Default leverage is **20x cross-margin** for all assets. You can change it per-a
 - Range: **1x** to **200x**
 - Modes: `cross` or `isolated`
 
+For an asset whose metadata declares `onlyIsolated`, HyPaper also implements
+`topUpIsolatedOnlyMargin`. It leaves the selected venue leverage unchanged and
+adds position margin until `position notional / allocated margin` equals the
+requested target leverage. Reductions release that allocated margin
+proportionally, matching the isolated-only lifecycle.
+
 ## Margin calculation
 
 For each position:
 
 ```
-Margin Used = (|position size| × mark price) / leverage
+Cross Margin Used = (|position size| × mark price) / selected leverage
+Isolated Margin Used = allocated isolated margin
 ```
 
 For a new order:
@@ -78,9 +85,17 @@ New Entry = (|currentSize| × currentEntry + fillSize × fillPrice)
 
 When you partially close, the entry price stays the same. When you flip (e.g., long to short), the new entry becomes the fill price.
 
+Maintenance margin is derived independently from the asset's metadata:
+
+```
+Maintenance Margin = |position size| × mark price / (2 × maxLeverage)
+```
+
 ## Liquidation price
 
-A simplified model based on maintenance margin (half of initial margin):
+Cross positions retain the simplified selected-leverage estimate below.
+Isolated positions use their allocated isolated margin and the asset's
+metadata-derived maintenance rate.
 
 | Position | Liquidation price |
 |----------|------------------|

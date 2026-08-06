@@ -3,9 +3,10 @@ import { redis } from '../store/redis.js';
 import { KEYS } from '../store/keys.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { D, sub, mul, add, isZero, gt, lt, gte, lte, abs, neg, min } from '../utils/math.js';
+import { D, sub, mul, div, add, isZero, gt, lt, gte, lte, abs, neg, min } from '../utils/math.js';
 import { nextTid } from '../utils/id.js';
 import { computeFillPrice } from '../utils/slippage.js';
+import { adjustedIsolatedMarginAfterFill, getMarkPrice } from '../engine/margin.js';
 import type { PaperOrder, PaperFill } from '../types/order.js';
 
 export class OrderMatcher {
@@ -158,6 +159,25 @@ export class OrderMatcher {
     const signedFillSz = order.isBuy ? fillSz : neg(fillSz);
     const newSzi = add(currentSzi, signedFillSz);
 
+    const leverageState = await redis.hgetall(KEYS.USER_LEV(userId, asset));
+    let isolatedMarginAfterFill: string | null = null;
+    if (leverageState.isCross === 'false') {
+      const leverage = leverageState.leverage ? parseInt(leverageState.leverage, 10) : 20;
+      const marginReferencePrice = await getMarkPrice(order.coin) ?? fillPx;
+      const currentMargin = leverageState.isolatedMargin && gt(leverageState.isolatedMargin, '0')
+        ? leverageState.isolatedMargin
+        : (isZero(currentSzi)
+          ? '0'
+          : div(mul(abs(currentSzi), marginReferencePrice), leverage.toString()));
+      isolatedMarginAfterFill = adjustedIsolatedMarginAfterFill(
+        currentMargin,
+        currentSzi,
+        newSzi,
+        marginReferencePrice,
+        leverage,
+      );
+    }
+
     // Calculate new entry price (weighted average)
     let newEntryPx: string;
     let closedPnl = '0';
@@ -259,6 +279,12 @@ export class OrderMatcher {
         'cumFundingSinceChange', '0',
       );
       pipeline.sadd(KEYS.USER_POSITIONS(userId), asset.toString());
+    }
+    if (isolatedMarginAfterFill !== null) {
+      pipeline.hset(
+        KEYS.USER_LEV(userId, asset),
+        'isolatedMargin', isolatedMarginAfterFill,
+      );
     }
 
     // Track active user for funding

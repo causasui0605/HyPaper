@@ -5,7 +5,12 @@ vi.mock('../store/redis.js', () => ({
   redis: {},
 }));
 
-import { calculatePositionUnrealizedPnl, calculateLiquidationPrice } from '../engine/margin.js';
+import {
+  adjustedIsolatedMarginAfterFill,
+  calculateIsolatedLiquidationPrice,
+  calculatePositionUnrealizedPnl,
+  calculateLiquidationPrice,
+} from '../engine/margin.js';
 
 describe('margin calculations', () => {
   describe('calculatePositionUnrealizedPnl', () => {
@@ -123,6 +128,26 @@ describe('margin calculations', () => {
         expect(Number(liqPx)).toBeGreaterThan(49800);
         expect(Number(liqPx)).toBeLessThan(50000);
       });
+    });
+  });
+
+  describe('isolated margin', () => {
+    it('removes margin proportionally as a position is reduced', () => {
+      expect(adjustedIsolatedMarginAfterFill('300', '120', '60', '3', 10)).toBe('150');
+    });
+
+    it('allocates selected-leverage margin for a fresh or flipped position', () => {
+      expect(adjustedIsolatedMarginAfterFill('0', '0', '100', '2.5', 10)).toBe('25');
+      expect(adjustedIsolatedMarginAfterFill('150', '60', '-20', '3', 10)).toBe('6');
+    });
+
+    it('uses allocated margin and max-leverage maintenance for liquidation', () => {
+      expect(calculateIsolatedLiquidationPrice('100', '3', '100', 10)).toBe(
+        '2.10526315789473684210526315789',
+      );
+      expect(calculateIsolatedLiquidationPrice('-100', '3', '100', 10)).toBe(
+        '3.80952380952380952380952380952',
+      );
     });
   });
 });

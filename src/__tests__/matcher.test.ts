@@ -66,6 +66,19 @@ describe('OrderMatcher', () => {
     await redisMock.hset(KEYS.MARKET_MIDS, coin, price);
   }
 
+  async function seedMarkPrice(coin: string, price: string) {
+    await redisMock.hset(KEYS.MARKET_CTX(coin), 'markPx', price);
+  }
+
+  async function seedIsolatedLeverage(leverage: string, margin?: string) {
+    await redisMock.hset(
+      KEYS.USER_LEV(USER, ASSET),
+      'leverage', leverage,
+      'isCross', 'false',
+      ...(margin === undefined ? [] : ['isolatedMargin', margin]),
+    );
+  }
+
   async function createOpenOrder(opts: {
     oid: number;
     coin?: string;
@@ -371,6 +384,80 @@ describe('OrderMatcher', () => {
   // =================================================================
 
   describe('executeFill', () => {
+    it('persists selected-leverage margin for a fresh isolated position', async () => {
+      await seedUser('100000');
+      await seedMidPrice(COIN, '50000');
+      await seedMarkPrice(COIN, '50000');
+      await seedIsolatedLeverage('10');
+      await createOpenOrder({ oid: 1, isBuy: true, sz: '1', limitPx: '50000' });
+
+      await matcher.matchAll();
+
+      await expect(
+        redisMock.hget(KEYS.USER_LEV(USER, ASSET), 'isolatedMargin'),
+      ).resolves.toBe('5000');
+    });
+
+    it('adds selected-leverage margin when increasing an isolated position', async () => {
+      await seedUser('100000');
+      await setPosition('1', '50000');
+      await seedMidPrice(COIN, '50000');
+      await seedMarkPrice(COIN, '50000');
+      await seedIsolatedLeverage('10', '20000');
+      await createOpenOrder({ oid: 1, isBuy: true, sz: '1', limitPx: '50000' });
+
+      await matcher.matchAll();
+
+      await expect(
+        redisMock.hget(KEYS.USER_LEV(USER, ASSET), 'isolatedMargin'),
+      ).resolves.toBe('25000');
+    });
+
+    it('releases isolated margin proportionally on a reduction', async () => {
+      await seedUser('100000');
+      await setPosition('2', '50000');
+      await seedMidPrice(COIN, '52000');
+      await seedMarkPrice(COIN, '52000');
+      await seedIsolatedLeverage('10', '40000');
+      await createOpenOrder({ oid: 1, isBuy: false, sz: '1', limitPx: '52000' });
+
+      await matcher.matchAll();
+
+      await expect(
+        redisMock.hget(KEYS.USER_LEV(USER, ASSET), 'isolatedMargin'),
+      ).resolves.toBe('20000');
+    });
+
+    it('allocates fresh selected-leverage margin after an isolated flip', async () => {
+      await seedUser('100000');
+      await setPosition('1', '50000');
+      await seedMidPrice(COIN, '52000');
+      await seedMarkPrice(COIN, '52000');
+      await seedIsolatedLeverage('10', '20000');
+      await createOpenOrder({ oid: 1, isBuy: false, sz: '3', limitPx: '52000' });
+
+      await matcher.matchAll();
+
+      await expect(
+        redisMock.hget(KEYS.USER_LEV(USER, ASSET), 'isolatedMargin'),
+      ).resolves.toBe('10400');
+    });
+
+    it('sets isolated position margin to zero on a full close', async () => {
+      await seedUser('100000');
+      await setPosition('1', '50000');
+      await seedMidPrice(COIN, '52000');
+      await seedMarkPrice(COIN, '52000');
+      await seedIsolatedLeverage('10', '20000');
+      await createOpenOrder({ oid: 1, isBuy: false, sz: '1', limitPx: '52000' });
+
+      await matcher.matchAll();
+
+      await expect(
+        redisMock.hget(KEYS.USER_LEV(USER, ASSET), 'isolatedMargin'),
+      ).resolves.toBe('0');
+    });
+
     it('opens a new long position', async () => {
       await seedUser('100000');
       await seedMidPrice(COIN, '50000');

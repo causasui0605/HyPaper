@@ -7,46 +7,18 @@ import { checkMarginForOrder } from './margin.js';
 import { OrderMatcher } from '../worker/order-matcher.js';
 import { computeFillPrice } from '../utils/slippage.js';
 import { eventBus } from '../worker/index.js';
-import type { HlOrderWire, HlCancelRequest, HlCancelByCloidRequest, HlOrderResponseStatus, HlMeta } from '../types/hl.js';
+import { getAssetMetadata } from './asset.js';
+import type { HlOrderWire, HlCancelRequest, HlCancelByCloidRequest, HlOrderResponseStatus } from '../types/hl.js';
 import type { PaperOrder } from '../types/order.js';
 
 const matcher = new OrderMatcher(eventBus);
 
-const BUILDER_DEX_ASSET_BASE = 100_000;
-
-interface BuilderAssetEntry {
-  coin: string;
-  szDecimals: number;
-}
-
-async function builderAssetEntry(asset: number): Promise<BuilderAssetEntry | null> {
-  const raw = await redis.hget(KEYS.MARKET_ASSET_MAP, String(asset));
-  if (!raw) return null;
-  return JSON.parse(raw) as BuilderAssetEntry;
-}
-
 export async function resolveAssetCoin(asset: number): Promise<string | null> {
-  if (asset >= BUILDER_DEX_ASSET_BASE) {
-    const entry = await builderAssetEntry(asset);
-    return entry ? entry.coin : null;
-  }
-  const metaRaw = await redis.get(KEYS.MARKET_META);
-  if (!metaRaw) return null;
-  const meta: HlMeta = JSON.parse(metaRaw);
-  if (asset < 0 || asset >= meta.universe.length) return null;
-  return meta.universe[asset].name;
+  return (await getAssetMetadata(asset))?.coin ?? null;
 }
 
 export async function getAssetDecimals(asset: number): Promise<number> {
-  if (asset >= BUILDER_DEX_ASSET_BASE) {
-    const entry = await builderAssetEntry(asset);
-    return entry ? entry.szDecimals : 0;
-  }
-  const metaRaw = await redis.get(KEYS.MARKET_META);
-  if (!metaRaw) return 0;
-  const meta: HlMeta = JSON.parse(metaRaw);
-  if (asset < 0 || asset >= meta.universe.length) return 0;
-  return meta.universe[asset].szDecimals;
+  return (await getAssetMetadata(asset))?.szDecimals ?? 0;
 }
 
 export async function placeOrders(
@@ -375,8 +347,11 @@ export async function updateLeverage(
   isCross: boolean,
   leverage: number,
 ): Promise<void> {
+  const current = await redis.hgetall(KEYS.USER_LEV(userId, asset));
+  const modeChanged = (current.isCross !== 'false') !== isCross;
   await redis.hset(KEYS.USER_LEV(userId, asset),
     'leverage', leverage.toString(),
     'isCross', isCross.toString(),
+    ...(modeChanged ? ['isolatedMargin', '0'] : []),
   );
 }

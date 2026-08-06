@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { placeOrders, cancelOrders, cancelByCloid, updateLeverage } from '../../engine/order.js';
+import { topUpIsolatedOnlyMargin } from '../../engine/margin.js';
 import { ensureAccount } from '../middleware/auth.js';
 import { logger } from '../../utils/logger.js';
 import type { HlExchangeAction } from '../../types/hl.js';
@@ -103,6 +104,21 @@ exchangeRouter.post('/', async (c) => {
         }
 
         await updateLeverage(wallet, action.asset, action.isCross, action.leverage);
+        return c.json({
+          status: 'ok',
+          response: { type: 'default' },
+        });
+      }
+
+      case 'topUpIsolatedOnlyMargin': {
+        if (!Number.isSafeInteger(action.asset) || typeof action.leverage !== 'string') {
+          return c.json({
+            status: 'err',
+            response: 'topUpIsolatedOnlyMargin requires asset (integer), leverage (decimal string)',
+          }, 400);
+        }
+
+        await topUpIsolatedOnlyMargin(wallet, action.asset, action.leverage);
         return c.json({
           status: 'ok',
           response: { type: 'default' },

@@ -78,13 +78,20 @@ export interface HlUpdateLeverageAction {
   leverage: number;
 }
 
+export interface HlTopUpIsolatedOnlyMarginAction {
+  type: 'topUpIsolatedOnlyMargin';
+  asset: number;
+  leverage: string;
+}
+
 export type HlExchangeAction =
   | HlOrderAction
   | HlCancelAction
   | HlCancelByCloidAction
   | HlModifyAction
   | HlBatchModifyAction
-  | HlUpdateLeverageAction;
+  | HlUpdateLeverageAction
+  | HlTopUpIsolatedOnlyMarginAction;
 
 // === Info request types ===
 
