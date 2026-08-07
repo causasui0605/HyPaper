@@ -15,6 +15,8 @@ import {
   getHistoricalReplayRequestSchema,
   importHistoricalReplayRequestSchema,
 } from '../../types/historical-replay.js';
+import { getPnlSnapshot, PnlSnapshotError } from '../../engine/pnl.js';
+import { getPnlSnapshotRequestSchema } from '../../types/pnl.js';
 
 export const hypaperRouter = new Hono();
 
@@ -31,6 +33,45 @@ hypaperRouter.post('/', async (c) => {
     return c.json({ error: 'Missing user' }, 400);
   }
   const normalizedUser = user.toLowerCase();
+
+  if (type === 'getPnlSnapshot') {
+    if (!config.PNL_SNAPSHOT_ENABLED) {
+      return c.json({
+        type: 'pnlSnapshot',
+        status: 'disabled',
+        paper: true,
+        error: 'Programme PnL snapshots are disabled on this host',
+      }, 403);
+    }
+    try {
+      const request = getPnlSnapshotRequestSchema.parse(body);
+      return c.json(await getPnlSnapshot(normalizedUser, request.coins));
+    } catch (err) {
+      logger.warn({ err, type }, 'Programme PnL snapshot refused');
+      if (err instanceof PnlSnapshotError) {
+        return c.json({
+          type: 'pnlSnapshot',
+          status: 'refused',
+          paper: true,
+          error: err.message,
+        }, err.status);
+      }
+      if (err instanceof ZodError) {
+        return c.json({
+          type: 'pnlSnapshot',
+          status: 'refused',
+          paper: true,
+          error: err.message,
+        }, 400);
+      }
+      return c.json({
+        type: 'pnlSnapshot',
+        status: 'error',
+        paper: true,
+        error: err instanceof Error ? err.message : String(err),
+      }, 500);
+    }
+  }
 
   if (type === 'importHistoricalReplay' || type === 'getHistoricalReplay') {
     if (!config.HISTORICAL_REPLAY_ENABLED) {

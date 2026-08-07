@@ -18,6 +18,11 @@ export const KEYS = {
   USER_FILLS: (userId: string) => `user:${userId}:fills`,
   USER_FUNDINGS: (userId: string) => `user:${userId}:fundings`,
 
+  // Immutable programme-PnL funding evidence. Account reset does not delete this ledger.
+  PNL_FUNDING_EVENTS: (userId: string) => `user:${userId}:pnl:funding-events`,
+  PNL_FUNDING_EVENT: (userId: string, eventId: string) =>
+    `user:${userId}:pnl:funding-event:${eventId}`,
+
   // Replay audit data never enters ordinary order/fill/funding schemas.
   HISTORICAL_REPLAY_INDEX: (userId: string) => `user:${userId}:hpr:index`,
   HISTORICAL_REPLAY_BATCH: (userId: string, batchId: string) => `user:${userId}:hpr:batch:${batchId}`,

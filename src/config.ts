@@ -25,6 +25,8 @@ const envSchema = z.object({
   // Sterile programme replay is deliberately unavailable unless the host opts in.
   // Do not use z.coerce.boolean here: the string "false" is truthy in JavaScript.
   HISTORICAL_REPLAY_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  // Read-only programme PnL snapshots are unavailable unless the paper host opts in.
+  PNL_SNAPSHOT_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   FUNDING_ENABLED: z.coerce.boolean().default(true),
   FUNDING_INTERVAL_MS: z.coerce.number().default(28_800_000),
   // Comma-separated builder-deployed perp dex names to mirror (e.g. "xyz").

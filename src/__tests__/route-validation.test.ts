@@ -8,6 +8,7 @@ const mockConfig = vi.hoisted(() => ({
   DEFAULT_BALANCE: '10000',
   LOG_LEVEL: 'silent',
   HISTORICAL_REPLAY_ENABLED: false,
+  PNL_SNAPSHOT_ENABLED: false,
   FEE_RATE_TAKER: '0.00035',
 }));
 
@@ -37,17 +38,30 @@ vi.mock('../engine/historical-replay.js', () => ({
   getHistoricalReplay: vi.fn(),
 }));
 
+vi.mock('../engine/pnl.js', () => ({
+  PnlSnapshotError: class PnlSnapshotError extends Error {
+    constructor(message: string, readonly status = 409) {
+      super(message);
+    }
+  },
+  getPnlSnapshot: vi.fn(),
+}));
+
 vi.mock('../config.js', () => ({
   config: mockConfig,
 }));
 
 const { exchangeRouter } = await import('../api/routes/exchange.js');
 const { hypaperRouter } = await import('../api/routes/hypaper.js');
+const { ensureAccount } = await import('../api/middleware/auth.js');
+const { getPnlSnapshot, PnlSnapshotError } = await import('../engine/pnl.js');
 
 describe('route validation', () => {
   beforeEach(() => {
     redisMock.flushall();
+    vi.clearAllMocks();
     mockConfig.HISTORICAL_REPLAY_ENABLED = false;
+    mockConfig.PNL_SNAPSHOT_ENABLED = false;
   });
 
   it('rejects NaN order sizes on /exchange', async () => {
@@ -253,6 +267,88 @@ describe('route validation', () => {
       balance: '123.45',
     });
     await expect(redisMock.hget(KEYS.USER_ACCOUNT('0xabc'), 'balance')).resolves.toBe('123.45');
+  });
+
+  it('refuses the read-only PnL snapshot route while strict opt-in is disabled', async () => {
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'getPnlSnapshot', user: '0xAbC', coins: ['xyz:CL'] }),
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      type: 'pnlSnapshot', status: 'disabled', paper: true,
+    });
+    expect(ensureAccount).not.toHaveBeenCalled();
+    expect(getPnlSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('serves an opted-in PnL snapshot without creating or mutating an account', async () => {
+    mockConfig.PNL_SNAPSHOT_ENABLED = true;
+    vi.mocked(getPnlSnapshot).mockResolvedValue({
+      type: 'pnlSnapshot', status: 'ok', paper: true, pristine: true,
+      asOf: 1, startingBalance: '10000', accountValue: '10000', totalPnl: '0',
+      replayBatchId: null, ordinaryFillCount: 0, fundingEventCount: 0,
+      assets: [],
+    });
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'getPnlSnapshot', user: '0xAbC',
+        coins: ['xyz:CL', 'xyz:NATGAS', 'xyz:BRENTOIL', 'xyz:COPPER'],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(getPnlSnapshot).toHaveBeenCalledWith('0xabc', [
+      'xyz:CL', 'xyz:NATGAS', 'xyz:BRENTOIL', 'xyz:COPPER',
+    ]);
+    expect(ensureAccount).not.toHaveBeenCalled();
+  });
+
+  it('strictly rejects malformed PnL snapshot requests before any account mutation', async () => {
+    mockConfig.PNL_SNAPSHOT_ENABLED = true;
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    for (const body of [
+      { type: 'getPnlSnapshot', user: '0xabc', coins: [] },
+      { type: 'getPnlSnapshot', user: '0xabc', coins: ['xyz:CL', 'xyz:CL'] },
+      { type: 'getPnlSnapshot', user: '0xabc', coins: ['xyz:CL'], oid: 7 },
+    ]) {
+      const res = await app.request('/hypaper', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        type: 'pnlSnapshot', status: 'refused', paper: true,
+      });
+    }
+    expect(ensureAccount).not.toHaveBeenCalled();
+    expect(getPnlSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('returns a fail-closed PnL refusal without leaking the account identity', async () => {
+    mockConfig.PNL_SNAPSHOT_ENABLED = true;
+    vi.mocked(getPnlSnapshot).mockRejectedValue(new PnlSnapshotError('reconciliation refused', 409));
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'getPnlSnapshot', user: '0xSecret', coins: ['xyz:CL'] }),
+    });
+    expect(res.status).toBe(409);
+    const response = await res.json();
+    expect(response).toEqual({
+      type: 'pnlSnapshot', status: 'refused', paper: true, error: 'reconciliation refused',
+    });
+    expect(JSON.stringify(response)).not.toContain('0xSecret');
+    expect(JSON.stringify(response)).not.toContain('0xsecret');
+    expect(ensureAccount).not.toHaveBeenCalled();
   });
 
   it('refuses historical replay routes while the strict opt-in is disabled', async () => {

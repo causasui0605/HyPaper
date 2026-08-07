@@ -125,6 +125,10 @@ export class RedisMock {
       .map(([member]) => member);
   }
 
+  async zcard(key: string): Promise<number> {
+    return this.sortedSets.get(key)?.size ?? 0;
+  }
+
   // --- List commands ---
 
   async lpush(key: string, ...values: string[]): Promise<number> {
@@ -136,10 +140,80 @@ export class RedisMock {
     return list.length;
   }
 
+  async rpush(key: string, ...values: string[]): Promise<number> {
+    if (!this.lists.has(key)) this.lists.set(key, []);
+    const list = this.lists.get(key)!;
+    list.push(...values);
+    return list.length;
+  }
+
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
     const list = this.lists.get(key) ?? [];
     const end = stop < 0 ? list.length + stop + 1 : stop + 1;
     return list.slice(start, end);
+  }
+
+  async llen(key: string): Promise<number> {
+    return this.lists.get(key)?.length ?? 0;
+  }
+
+  async lpos(key: string, value: string): Promise<number | null> {
+    const index = this.lists.get(key)?.indexOf(value) ?? -1;
+    return index < 0 ? null : index;
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    const matcher = new RegExp(`^${escaped}$`);
+    return [
+      ...this.store.keys(),
+      ...this.hashes.keys(),
+      ...this.sets.keys(),
+      ...this.sortedSets.keys(),
+      ...this.lists.keys(),
+    ].filter((key, index, keys) => keys.indexOf(key) === index && matcher.test(key)).sort();
+  }
+
+  /** Atomic test double for the immutable programme-funding Lua transaction. */
+  async eval(_script: string, numberOfKeys: number, ...args: string[]): Promise<string> {
+    if (numberOfKeys !== 4 || args.length !== 5) {
+      throw new Error('RedisMock only implements the four-key programme-funding transaction');
+    }
+    const [accountKey, positionKey, eventKey, indexKey, transactionJson] = args;
+    const transaction = JSON.parse(transactionJson) as Record<string, string>;
+    const response = (state: string, value: string) => JSON.stringify({ state, value });
+    const existing = this.store.get(eventKey);
+    if (existing !== undefined) {
+      if ((this.lists.get(indexKey)?.indexOf(transaction.eventId) ?? -1) < 0) {
+        return response('refused', 'funding event exists without immutable ledger index');
+      }
+      return response('retry', existing);
+    }
+    const account = this.hashes.get(accountKey);
+    const position = this.hashes.get(positionKey);
+    if (!account) return response('refused', 'account hash is missing or malformed');
+    if (!position) return response('refused', 'position hash is missing or malformed');
+    const checks: Array<[Map<string, string>, string, string, string]> = [
+      [account, 'userId', transaction.user, 'account identity changed before funding commit'],
+      [account, 'balance', transaction.accountBalanceBefore, 'account balance changed before funding commit'],
+      [position, 'userId', transaction.user, 'position identity changed before funding commit'],
+      [position, 'asset', transaction.asset, 'position asset changed before funding commit'],
+      [position, 'coin', transaction.coin, 'position coin changed before funding commit'],
+      [position, 'szi', transaction.szi, 'position size changed before funding commit'],
+      [position, 'cumFunding', transaction.cumFundingBefore, 'position cumulative funding changed before funding commit'],
+      [position, 'cumFundingSinceOpen', transaction.cumFundingSinceOpenBefore, 'position open funding changed before funding commit'],
+      [position, 'cumFundingSinceChange', transaction.cumFundingSinceChangeBefore, 'position change funding changed before funding commit'],
+    ];
+    for (const [hash, field, expected, message] of checks) {
+      if ((hash.get(field) ?? '0') !== expected) return response('refused', message);
+    }
+    account.set('balance', transaction.accountBalanceAfter);
+    position.set('cumFunding', transaction.cumFundingAfter);
+    position.set('cumFundingSinceOpen', transaction.cumFundingSinceOpenAfter);
+    position.set('cumFundingSinceChange', transaction.cumFundingSinceChangeAfter);
+    this.store.set(eventKey, transaction.eventJson);
+    await this.rpush(indexKey, transaction.eventId);
+    return response('applied', transaction.eventJson);
   }
 
   // --- Pipeline ---

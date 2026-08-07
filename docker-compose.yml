@@ -22,6 +22,7 @@ services:
       - LOG_LEVEL=info
       - EXTRA_DEXS=${EXTRA_DEXS:-xyz}
       - EXTRA_DEX_CTX_REFRESH_MS=${EXTRA_DEX_CTX_REFRESH_MS:-15000}
+      - PNL_SNAPSHOT_ENABLED=${PNL_SNAPSHOT_ENABLED:-false}
     restart: unless-stopped
     profiles:
       - prod
