@@ -71,3 +71,29 @@ not belong here.
 
 - `plans/CO-M17-historical-replay.md` is the frozen dependency contract for the
   historical replay import milestone.
+- `plans/CO-M20A-programme-pnl-ledger.md` is the frozen dependency contract for
+  immutable programme-funding evidence and read-only programme PnL snapshots.
+
+## Programme PnL invariants
+
+- Programme PnL is a paper-only accounting view. It neither creates an account
+  nor mutates an order, fill, position, balance, replay, funding, or PostgreSQL
+  row. The endpoint is unavailable unless its separate host opt-in is enabled.
+- The immutable historical replay supplies the programme starting balance and
+  replay realized PnL/fees. Immediate ordinary Redis fills supply later realized
+  PnL/fees. A separately typed append-only funding ledger supplies every later
+  funding charge; current clearinghouse state and mark context supply current
+  unrealized PnL. Missing or malformed attribution is never guessed.
+- Each programme-funding event is deterministically bound to account, asset,
+  and funding-time bucket. One Redis script validates the exact pre-state, then
+  updates account/position funding fields and appends the immutable event as one
+  application boundary. Same-bucket retries adopt the existing validated event
+  without charging twice.
+- For each requested asset, cumulative PnL is replay closed PnL plus ordinary
+  closed PnL, minus replay and ordinary fees, minus durable funding charges,
+  plus current unrealized PnL. The four-asset total must exactly equal current
+  account value minus immutable programme starting balance.
+- A present, never-traded flat paper account reports exact zero. Once programme
+  activity exists, a flat book retains cumulative realized net PnL. Activity
+  without an immutable programme baseline, ledger mismatch, identity drift,
+  malformed arithmetic, or state movement during derivation fails closed.
