@@ -22,6 +22,7 @@ vi.mock('../config.js', () => ({
 }));
 
 const { FundingWorker, pnlFundingEventId } = await import('../worker/funding-worker.js');
+const { getUserFunding } = await import('../engine/funding-history.js');
 
 describe('FundingWorker', () => {
   let worker: InstanceType<typeof FundingWorker>;
@@ -58,9 +59,9 @@ describe('FundingWorker', () => {
     await redisMock.sadd(KEYS.USERS_ACTIVE, USER);
   }
 
-  async function setMarketCtx(coin: string, markPx: string, funding: string) {
+  async function setMarketCtx(coin: string, oraclePx: string, funding: string) {
     await redisMock.hset(KEYS.MARKET_CTX(coin),
-      'markPx', markPx,
+      'oraclePx', oraclePx,
       'funding', funding,
     );
   }
@@ -83,6 +84,22 @@ describe('FundingWorker', () => {
     expect(pos.cumFundingSinceChange).toBe('5');
   });
 
+  it('uses the oracle price, not the mark price, and canonicalizes source decimals', async () => {
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000.0', '0.0001000');
+    await redisMock.hset(KEYS.MARKET_CTX(COIN), 'markPx', '60000');
+
+    await worker.applyFunding();
+
+    await expect(redisMock.hget(KEYS.USER_ACCOUNT(USER), 'balance')).resolves.toBe('99995');
+    const [id] = await redisMock.lrange(KEYS.PNL_FUNDING_EVENTS(USER), 0, -1);
+    const event = JSON.parse((await redisMock.get(KEYS.PNL_FUNDING_EVENT(USER, id)))!);
+    expect(event.oraclePx).toBe('50000');
+    expect(event.fundingRate).toBe('0.0001');
+    expect(event).not.toHaveProperty('markPx');
+  });
+
   it('atomically stores a canonical immutable funding event', async () => {
     const now = 1_800_000_123_456;
     worker = new FundingWorker({ redis: redisMock, now: () => now });
@@ -98,7 +115,7 @@ describe('FundingWorker', () => {
     await expect(redisMock.lrange(KEYS.PNL_FUNDING_EVENTS(USER), 0, -1)).resolves.toEqual([id]);
     const event = JSON.parse((await redisMock.get(KEYS.PNL_FUNDING_EVENT(USER, id)))!);
     expect(event).toEqual({
-      schema: 'hypaper_pnl_funding_event_v1',
+      schema: 'hypaper_pnl_funding_event_v2',
       kind: 'pnl_funding_event',
       paper: true,
       eventId: id,
@@ -107,9 +124,10 @@ describe('FundingWorker', () => {
       fundingTime,
       appliedAt: now,
       szi: '1',
-      markPx: '50000',
+      oraclePx: '50000',
       fundingRate: '0.0001',
       fundingCharge: '5',
+      source: { kind: 'live_market_context' },
       accountBalanceBefore: '100000',
       accountBalanceAfter: '99995',
       cumFundingBefore: '0',
@@ -136,6 +154,34 @@ describe('FundingWorker', () => {
     await expect(redisMock.llen(KEYS.PNL_FUNDING_EVENTS(USER))).resolves.toBe(1);
   });
 
+  it('refuses a same-bucket retry whose immutable source inputs conflict', async () => {
+    const now = 1_800_000_123_456;
+    worker = new FundingWorker({ redis: redisMock, now: () => now });
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000', '0.0001');
+    await worker.applyFunding();
+    const fundingTime = Math.floor(now / mockConfig.FUNDING_INTERVAL_MS)
+      * mockConfig.FUNDING_INTERVAL_MS;
+
+    await expect(worker.applyFundingEvent({
+      userId: USER,
+      asset: ASSET,
+      coin: COIN,
+      fundingTime,
+      appliedAt: now + 1,
+      expectedSzi: '1',
+      oraclePx: '50000',
+      fundingRate: '0.0001',
+      source: {
+        kind: 'verified_backfill',
+        oracleSourceSha256: 'a'.repeat(64),
+        fundingSourceSha256: 'b'.repeat(64),
+      },
+    })).rejects.toThrow(/conflicting immutable evidence/);
+    await expect(redisMock.hget(KEYS.USER_ACCOUNT(USER), 'balance')).resolves.toBe('99995');
+  });
+
   it('records the next funding bucket as a second immutable event', async () => {
     let now = 1_800_000_123_456;
     worker = new FundingWorker({ redis: redisMock, now: () => now });
@@ -152,6 +198,42 @@ describe('FundingWorker', () => {
     const ids = await redisMock.lrange(KEYS.PNL_FUNDING_EVENTS(USER), 0, -1);
     expect(ids).toHaveLength(2);
     expect(new Set(ids).size).toBe(2);
+  });
+
+  it('serves signed local userFunding rows with exact time filtering', async () => {
+    let now = 1_800_000_123_456;
+    worker = new FundingWorker({ redis: redisMock, now: () => now });
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000', '0.0001');
+    await worker.applyFunding();
+    const first = Math.floor(now / mockConfig.FUNDING_INTERVAL_MS) * mockConfig.FUNDING_INTERVAL_MS;
+    now += mockConfig.FUNDING_INTERVAL_MS;
+    await worker.applyFunding();
+
+    await expect(getUserFunding(USER, first + 1, now, redisMock)).resolves.toEqual([{
+      time: first + mockConfig.FUNDING_INTERVAL_MS,
+      hash: pnlFundingEventId(USER, ASSET, first + mockConfig.FUNDING_INTERVAL_MS),
+      delta: {
+        type: 'funding', coin: COIN, usdc: '-5', szi: '1', fundingRate: '0.0001',
+      },
+    }]);
+  });
+
+  it('does not let one malformed position suppress an independent valid funding event', async () => {
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000', '0.0001');
+    await redisMock.hset(
+      KEYS.USER_POS(USER, 1),
+      'userId', USER, 'asset', '1', 'coin', 'ETH', 'szi', '1',
+      'cumFunding', '0', 'cumFundingSinceOpen', '0', 'cumFundingSinceChange', '0',
+    );
+    await redisMock.sadd(KEYS.USER_POSITIONS(USER), '1');
+
+    await expect(worker.applyFunding()).rejects.toThrow(/ETH is missing funding rate/);
+    await expect(redisMock.hget(KEYS.USER_ACCOUNT(USER), 'balance')).resolves.toBe('99995');
+    await expect(redisMock.llen(KEYS.PNL_FUNDING_EVENTS(USER))).resolves.toBe(1);
   });
 
   it('fails closed without partial writes when the atomic preconditions change', async () => {
@@ -266,13 +348,13 @@ describe('FundingWorker', () => {
     expect(account.balance).toBe('100000');
   });
 
-  it('skips when funding rate is missing', async () => {
+  it('refuses when funding rate is missing', async () => {
     await seedUser('100000');
     await setPosition('1', '50000');
     // Set market ctx without funding
-    await redisMock.hset(KEYS.MARKET_CTX(COIN), 'markPx', '50000');
+    await redisMock.hset(KEYS.MARKET_CTX(COIN), 'oraclePx', '50000');
 
-    await worker.applyFunding();
+    await expect(worker.applyFunding()).rejects.toThrow(/missing funding rate/);
 
     const account = await redisMock.hgetall(KEYS.USER_ACCOUNT(USER));
     expect(account.balance).toBe('100000');
@@ -297,7 +379,7 @@ describe('FundingWorker', () => {
 
     mockConfig.FUNDING_INTERVAL_MS = 28_800_000;
     worker = new FundingWorker({ redis: redisMock, now: () => Number.NaN });
-    await expect(worker.applyFunding()).rejects.toThrow(/invalid timestamp/);
+    await expect(worker.applyFunding()).rejects.toThrow(/non-negative safe integer/);
     expect(smembers).not.toHaveBeenCalled();
   });
 });

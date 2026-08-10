@@ -4,6 +4,7 @@ import { KEYS } from '../../store/keys.js';
 import { config } from '../../config.js';
 import { getClearinghouseState, getOpenOrders, getFrontendOpenOrders, getOrderStatus } from '../../engine/position.js';
 import { getUserFills, getUserFillsByTime } from '../../engine/fill.js';
+import { getUserFunding } from '../../engine/funding-history.js';
 import { logger } from '../../utils/logger.js';
 import { ensureAccount } from '../middleware/auth.js';
 
@@ -133,6 +134,12 @@ infoRouter.post('/', async (c) => {
           body.endTime,
         );
         return c.json(fills);
+      }
+
+      case 'userFunding': {
+        if (!user) return c.json({ error: 'Missing user' }, 400);
+        const history = await getUserFunding(user, body.startTime ?? 0, body.endTime);
+        return c.json(history);
       }
 
       case 'orderStatus': {

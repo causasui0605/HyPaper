@@ -1,12 +1,24 @@
 import { z } from 'zod';
 
-export const PNL_FUNDING_EVENT_SCHEMA = 'hypaper_pnl_funding_event_v1' as const;
+export const PNL_FUNDING_EVENT_SCHEMA = 'hypaper_pnl_funding_event_v2' as const;
 
 const canonicalDecimal = z.string().regex(
   /^(?:0|-?(?:(?:[1-9][0-9]*)(?:\.[0-9]*[1-9])?|0\.[0-9]*[1-9]))$/,
   'must be a canonical decimal string',
 );
 const positiveCanonicalDecimal = canonicalDecimal.refine((value) => !value.startsWith('-') && value !== '0');
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
+
+const fundingSourceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('live_market_context'),
+  }).strict(),
+  z.object({
+    kind: z.literal('verified_backfill'),
+    oracleSourceSha256: sha256,
+    fundingSourceSha256: sha256,
+  }).strict(),
+]);
 
 export const pnlFundingEventSchema = z.object({
   schema: z.literal(PNL_FUNDING_EVENT_SCHEMA),
@@ -18,9 +30,10 @@ export const pnlFundingEventSchema = z.object({
   fundingTime: z.number().int().nonnegative().safe(),
   appliedAt: z.number().int().nonnegative().safe(),
   szi: canonicalDecimal,
-  markPx: positiveCanonicalDecimal,
+  oraclePx: positiveCanonicalDecimal,
   fundingRate: canonicalDecimal,
   fundingCharge: canonicalDecimal,
+  source: fundingSourceSchema,
   accountBalanceBefore: canonicalDecimal,
   accountBalanceAfter: canonicalDecimal,
   cumFundingBefore: canonicalDecimal,

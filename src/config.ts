@@ -27,8 +27,8 @@ const envSchema = z.object({
   HISTORICAL_REPLAY_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   // Read-only programme PnL snapshots are unavailable unless the paper host opts in.
   PNL_SNAPSHOT_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
-  FUNDING_ENABLED: z.coerce.boolean().default(true),
-  FUNDING_INTERVAL_MS: z.coerce.number().default(28_800_000),
+  FUNDING_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  FUNDING_INTERVAL_MS: z.coerce.number().default(3_600_000),
   // Comma-separated builder-deployed perp dex names to mirror (e.g. "xyz").
   // Empty = main dex only (upstream behavior unchanged).
   EXTRA_DEXS: z.string().default(''),

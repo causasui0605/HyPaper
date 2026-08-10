@@ -96,12 +96,12 @@ describe('read-only programme PnL snapshots', () => {
     const fundingTime = NOW - 28_800_000 * (2 - sequence);
     const eventId = pnlFundingEventId(USER, asset, fundingTime);
     const szi = asset === 3 ? '-1' : '2';
-    const markPx = asset === 3 ? '50' : '100';
-    const fundingRate = D(fundingCharge).div(D(szi).times(D(markPx))).toString();
+    const oraclePx = asset === 3 ? '50' : '100';
+    const fundingRate = D(fundingCharge).div(D(szi).times(D(oraclePx))).toString();
     const event = {
-      schema: 'hypaper_pnl_funding_event_v1', kind: 'pnl_funding_event', paper: true,
+      schema: 'hypaper_pnl_funding_event_v2', kind: 'pnl_funding_event', paper: true,
       eventId, asset, coin, fundingTime, appliedAt: fundingTime + 1,
-      szi, markPx, fundingRate, fundingCharge,
+      szi, oraclePx, fundingRate, fundingCharge, source: { kind: 'live_market_context' },
       accountBalanceBefore: '10000',
       accountBalanceAfter: D(10000).minus(D(fundingCharge)).toString(),
       cumFundingBefore: '0', cumFundingAfter: fundingCharge,

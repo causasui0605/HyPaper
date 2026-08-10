@@ -218,7 +218,7 @@ export async function getPnlSnapshot(
     if (event.appliedAt < priorAppliedAt || event.fundingTime < priorFundingTime) {
       refuse(`funding event ${id} is out of immutable ledger order`);
     }
-    if (!D(event.fundingCharge).eq(D(event.szi).times(D(event.markPx)).times(D(event.fundingRate)))) {
+    if (!D(event.fundingCharge).eq(D(event.szi).times(D(event.oraclePx)).times(D(event.fundingRate)))) {
       refuse(`funding event ${id} charge does not match its model inputs`);
     }
     if (!D(event.accountBalanceAfter).eq(D(event.accountBalanceBefore).minus(D(event.fundingCharge)))) {

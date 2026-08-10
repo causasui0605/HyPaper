@@ -23,6 +23,8 @@ services:
       - EXTRA_DEXS=${EXTRA_DEXS:-xyz}
       - EXTRA_DEX_CTX_REFRESH_MS=${EXTRA_DEX_CTX_REFRESH_MS:-15000}
       - PNL_SNAPSHOT_ENABLED=${PNL_SNAPSHOT_ENABLED:-false}
+      - FUNDING_ENABLED=${FUNDING_ENABLED:?set FUNDING_ENABLED explicitly}
+      - FUNDING_INTERVAL_MS=${FUNDING_INTERVAL_MS:?set FUNDING_INTERVAL_MS explicitly}
     restart: unless-stopped
     profiles:
       - prod
