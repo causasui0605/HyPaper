@@ -176,8 +176,49 @@ export class RedisMock {
 
   /** Atomic test double for the immutable programme-funding Lua transaction. */
   async eval(_script: string, numberOfKeys: number, ...args: string[]): Promise<string> {
+    if (numberOfKeys === 5 && args.length === 6) {
+      const [accountKey, positionKey, originalKey, correctionKey, indexKey,
+        transactionJson] = args;
+      const transaction = JSON.parse(transactionJson) as Record<string, string>;
+      const response = (state: string, value: string) => JSON.stringify({ state, value });
+      const existing = this.store.get(correctionKey);
+      if (existing !== undefined) {
+        if ((this.lists.get(indexKey)?.indexOf(transaction.correctionId) ?? -1) < 0) {
+          return response('refused', 'funding correction exists without immutable ledger index');
+        }
+        return response('retry', existing);
+      }
+      if (this.store.get(originalKey) !== transaction.originalEventJson) {
+        return response('refused', 'original funding event changed before correction commit');
+      }
+      const account = this.hashes.get(accountKey);
+      const position = this.hashes.get(positionKey);
+      if (!account) return response('refused', 'account hash is missing or malformed');
+      if (!position) return response('refused', 'position hash is missing or malformed');
+      const checks: Array<[Map<string, string>, string, string, string]> = [
+        [account, 'userId', transaction.user, 'account identity changed before correction commit'],
+        [account, 'balance', transaction.accountBalanceBefore, 'account balance changed before correction commit'],
+        [position, 'userId', transaction.user, 'position identity changed before correction commit'],
+        [position, 'asset', transaction.asset, 'position asset changed before correction commit'],
+        [position, 'coin', transaction.coin, 'position coin changed before correction commit'],
+        [position, 'szi', transaction.szi, 'position size changed before correction commit'],
+        [position, 'cumFunding', transaction.cumFundingBefore, 'position cumulative funding changed before correction commit'],
+        [position, 'cumFundingSinceOpen', transaction.cumFundingSinceOpenBefore, 'position open funding changed before correction commit'],
+        [position, 'cumFundingSinceChange', transaction.cumFundingSinceChangeBefore, 'position change funding changed before correction commit'],
+      ];
+      for (const [hash, field, expected, message] of checks) {
+        if ((hash.get(field) ?? '0') !== expected) return response('refused', message);
+      }
+      account.set('balance', transaction.accountBalanceAfter);
+      position.set('cumFunding', transaction.cumFundingAfter);
+      position.set('cumFundingSinceOpen', transaction.cumFundingSinceOpenAfter);
+      position.set('cumFundingSinceChange', transaction.cumFundingSinceChangeAfter);
+      this.store.set(correctionKey, transaction.correctionJson);
+      await this.rpush(indexKey, transaction.correctionId);
+      return response('applied', transaction.correctionJson);
+    }
     if (numberOfKeys !== 4 || args.length !== 5) {
-      throw new Error('RedisMock only implements the four-key programme-funding transaction');
+      throw new Error('RedisMock only implements programme-funding transactions');
     }
     const [accountKey, positionKey, eventKey, indexKey, transactionJson] = args;
     const transaction = JSON.parse(transactionJson) as Record<string, string>;

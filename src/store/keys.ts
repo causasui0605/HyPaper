@@ -22,6 +22,9 @@ export const KEYS = {
   PNL_FUNDING_EVENTS: (userId: string) => `user:${userId}:pnl:funding-events`,
   PNL_FUNDING_EVENT: (userId: string, eventId: string) =>
     `user:${userId}:pnl:funding-event:${eventId}`,
+  PNL_FUNDING_CORRECTIONS: (userId: string) => `user:${userId}:pnl:funding-corrections`,
+  PNL_FUNDING_CORRECTION: (userId: string, correctionId: string) =>
+    `user:${userId}:pnl:funding-correction:${correctionId}`,
 
   // Replay audit data never enters ordinary order/fill/funding schemas.
   HISTORICAL_REPLAY_INDEX: (userId: string) => `user:${userId}:hpr:index`,

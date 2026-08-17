@@ -29,6 +29,9 @@ const envSchema = z.object({
   PNL_SNAPSHOT_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   FUNDING_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   FUNDING_INTERVAL_MS: z.coerce.number().default(3_600_000),
+  FUNDING_APPLY_DELAY_MS: z.coerce.number().default(30_000),
+  FUNDING_MAX_LATE_MS: z.coerce.number().default(55_000),
+  FUNDING_RETRY_MS: z.coerce.number().default(5_000),
   // Comma-separated builder-deployed perp dex names to mirror (e.g. "xyz").
   // Empty = main dex only (upstream behavior unchanged).
   EXTRA_DEXS: z.string().default(''),

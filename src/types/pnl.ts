@@ -14,6 +14,11 @@ const fundingSourceSchema = z.discriminatedUnion('kind', [
     kind: z.literal('live_market_context'),
   }).strict(),
   z.object({
+    kind: z.literal('live_boundary_snapshot'),
+    fundingHistoryTime: z.number().int().nonnegative().safe(),
+    contextObservedAt: z.number().int().nonnegative().safe(),
+  }).strict(),
+  z.object({
     kind: z.literal('verified_backfill'),
     oracleSourceSha256: sha256,
     fundingSourceSha256: sha256,
@@ -45,6 +50,42 @@ export const pnlFundingEventSchema = z.object({
 }).strict();
 
 export type PnlFundingEvent = z.infer<typeof pnlFundingEventSchema>;
+
+export const PNL_FUNDING_CORRECTION_SCHEMA = 'hypaper_pnl_funding_correction_v1' as const;
+
+export const pnlFundingCorrectionSchema = z.object({
+  schema: z.literal(PNL_FUNDING_CORRECTION_SCHEMA),
+  kind: z.literal('pnl_funding_correction'),
+  paper: z.literal(true),
+  correctionId: z.string().regex(/^hpfc[0-9a-f]{64}$/),
+  originalEventId: z.string().regex(/^hpfe[0-9a-f]{64}$/),
+  asset: z.number().int().nonnegative().safe(),
+  coin: z.string().min(1).max(128),
+  fundingTime: z.number().int().nonnegative().safe(),
+  appliedAt: z.number().int().nonnegative().safe(),
+  szi: canonicalDecimal,
+  originalFundingCharge: canonicalDecimal,
+  correctedOraclePx: positiveCanonicalDecimal,
+  correctedFundingRate: canonicalDecimal,
+  correctedFundingCharge: canonicalDecimal,
+  fundingChargeDelta: canonicalDecimal,
+  source: z.object({
+    kind: z.literal('verified_correction'),
+    originalEventSha256: sha256,
+    oracleSourceSha256: sha256,
+    fundingSourceSha256: sha256,
+  }).strict(),
+  accountBalanceBefore: canonicalDecimal,
+  accountBalanceAfter: canonicalDecimal,
+  cumFundingBefore: canonicalDecimal,
+  cumFundingAfter: canonicalDecimal,
+  cumFundingSinceOpenBefore: canonicalDecimal,
+  cumFundingSinceOpenAfter: canonicalDecimal,
+  cumFundingSinceChangeBefore: canonicalDecimal,
+  cumFundingSinceChangeAfter: canonicalDecimal,
+}).strict();
+
+export type PnlFundingCorrection = z.infer<typeof pnlFundingCorrectionSchema>;
 
 export const getPnlSnapshotRequestSchema = z.object({
   type: z.literal('getPnlSnapshot'),

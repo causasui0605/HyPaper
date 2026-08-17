@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { redis } from '../store/redis.js';
 import { KEYS } from '../store/keys.js';
@@ -6,10 +7,12 @@ import { getUserExecutionPresencePg } from '../store/pg-queries.js';
 import { D } from '../utils/math.js';
 import { getHistoricalReplay } from './historical-replay.js';
 import type { HistoricalReplayResult } from '../types/historical-replay.js';
-import { pnlFundingEventId } from '../worker/funding-worker.js';
+import { pnlFundingCorrectionId, pnlFundingEventId } from '../worker/funding-worker.js';
 import {
+  pnlFundingCorrectionSchema,
   pnlFundingEventSchema,
   type PnlAssetSnapshot,
+  type PnlFundingCorrection,
   type PnlFundingEvent,
   type PnlSnapshot,
 } from '../types/pnl.js';
@@ -149,11 +152,13 @@ export async function getPnlSnapshot(
     refuse('paper account is missing or has a different identity', 404);
   }
 
-  const [rawState, replayBatchId, ordinaryRaw, fundingIds, orderCount] = await Promise.all([
+  const [rawState, replayBatchId, ordinaryRaw, fundingIds, correctionIds,
+    orderCount] = await Promise.all([
     dependencies.clearinghouseState(normalizedUser),
     dependencies.redis.get(KEYS.HISTORICAL_REPLAY_INDEX(normalizedUser)),
     dependencies.redis.lrange(KEYS.USER_FILLS(normalizedUser), 0, -1),
     dependencies.redis.lrange(KEYS.PNL_FUNDING_EVENTS(normalizedUser), 0, -1),
+    dependencies.redis.lrange(KEYS.PNL_FUNDING_CORRECTIONS(normalizedUser), 0, -1),
     dependencies.redis.zcard(KEYS.USER_ORDERS(normalizedUser)),
   ]);
   const state = clearinghouseSchema.parse(rawState);
@@ -205,7 +210,6 @@ export async function getPnlSnapshot(
   const fundingEvents: PnlFundingEvent[] = [];
   const fundingEventRaw: string[] = [];
   let priorAppliedAt = -1;
-  let priorFundingTime = -1;
   for (const [index, id] of fundingIds.entries()) {
     const raw = await dependencies.redis.get(KEYS.PNL_FUNDING_EVENT(normalizedUser, id));
     if (!raw) refuse(`funding event ${id} is missing`);
@@ -215,7 +219,7 @@ export async function getPnlSnapshot(
       refuse(`funding event ${id} is not bound to this account, asset, and funding time`);
     }
     if (event.appliedAt < event.fundingTime) refuse(`funding event ${id} predates its funding time`);
-    if (event.appliedAt < priorAppliedAt || event.fundingTime < priorFundingTime) {
+    if (event.appliedAt < priorAppliedAt) {
       refuse(`funding event ${id} is out of immutable ledger order`);
     }
     if (!D(event.fundingCharge).eq(D(event.szi).times(D(event.oraclePx)).times(D(event.fundingRate)))) {
@@ -234,9 +238,83 @@ export async function getPnlSnapshot(
       }
     }
     priorAppliedAt = event.appliedAt;
-    priorFundingTime = event.fundingTime;
     fundingEvents.push(event);
     fundingEventRaw.push(raw);
+  }
+
+  if (new Set(correctionIds).size !== correctionIds.length) {
+    refuse('funding correction ledger contains duplicate ids');
+  }
+  const correctionKeys = await dependencies.redis.keys(
+    KEYS.PNL_FUNDING_CORRECTION(normalizedUser, '*'),
+  );
+  const expectedCorrectionKeys = correctionIds.map(
+    (id) => KEYS.PNL_FUNDING_CORRECTION(normalizedUser, id),
+  );
+  if (correctionKeys.length !== expectedCorrectionKeys.length
+    || correctionKeys.some((key) => !expectedCorrectionKeys.includes(key))) {
+    refuse('funding correction index and immutable keys disagree');
+  }
+  const fundingById = new Map(fundingEvents.map((event) => [event.eventId, event]));
+  const fundingRawById = new Map(
+    fundingEvents.map((event, index) => [event.eventId, fundingEventRaw[index]]),
+  );
+  const corrections = new Map<string, PnlFundingCorrection>();
+  const correctionRaw: string[] = [];
+  let priorCorrectionAppliedAt = -1;
+  for (const [index, correctionId] of correctionIds.entries()) {
+    const raw = await dependencies.redis.get(
+      KEYS.PNL_FUNDING_CORRECTION(normalizedUser, correctionId),
+    );
+    if (!raw) refuse(`funding correction ${correctionId} is missing`);
+    const correction = pnlFundingCorrectionSchema.parse(
+      parseJson(raw, `funding correction ${index}`),
+    );
+    const original = fundingById.get(correction.originalEventId);
+    const originalRaw = fundingRawById.get(correction.originalEventId);
+    if (!original || !originalRaw
+      || correction.correctionId !== correctionId
+      || correction.correctionId !== pnlFundingCorrectionId(
+        normalizedUser, correction.asset, correction.fundingTime, correction.originalEventId,
+      )
+      || correction.asset !== original.asset
+      || correction.coin !== original.coin
+      || correction.fundingTime !== original.fundingTime
+      || correction.szi !== original.szi
+      || correction.originalFundingCharge !== original.fundingCharge
+      || correction.source.originalEventSha256
+        !== createHash('sha256').update(originalRaw).digest('hex')) {
+      refuse(`funding correction ${correctionId} identity does not reconcile`);
+    }
+    if (correction.appliedAt < correction.fundingTime
+      || correction.appliedAt < priorCorrectionAppliedAt) {
+      refuse(`funding correction ${correctionId} is out of immutable ledger order`);
+    }
+    if (!D(correction.correctedFundingCharge).eq(
+      D(correction.szi).times(correction.correctedOraclePx)
+        .times(correction.correctedFundingRate),
+    ) || !D(correction.fundingChargeDelta).eq(
+      D(correction.correctedFundingCharge).minus(correction.originalFundingCharge),
+    ) || !D(correction.accountBalanceAfter).eq(
+      D(correction.accountBalanceBefore).minus(correction.fundingChargeDelta),
+    )) {
+      refuse(`funding correction ${correctionId} arithmetic does not reconcile`);
+    }
+    for (const [before, after, label] of [
+      [correction.cumFundingBefore, correction.cumFundingAfter, 'cumulative'],
+      [correction.cumFundingSinceOpenBefore, correction.cumFundingSinceOpenAfter, 'open cumulative'],
+      [correction.cumFundingSinceChangeBefore, correction.cumFundingSinceChangeAfter, 'change cumulative'],
+    ] as const) {
+      if (!D(after).eq(D(before).plus(correction.fundingChargeDelta))) {
+        refuse(`funding correction ${correctionId} ${label} transition does not reconcile`);
+      }
+    }
+    if (corrections.has(correction.originalEventId)) {
+      refuse(`funding event ${correction.originalEventId} has multiple corrections`);
+    }
+    corrections.set(correction.originalEventId, correction);
+    correctionRaw.push(raw);
+    priorCorrectionAppliedAt = correction.appliedAt;
   }
 
   let startingBalance: string;
@@ -284,6 +362,7 @@ export async function getPnlSnapshot(
     const pgPresence = await dependencies.executionPresencePg(normalizedUser);
     const pristine = ordinaryFills.length === 0
       && fundingIds.length === 0
+      && correctionIds.length === 0
       && currentPositions.size === 0
       && orderCount === 0
       && !pgPresence.orders
@@ -299,7 +378,11 @@ export async function getPnlSnapshot(
     }
     const asset = assets.get(event.coin);
     if (!asset) refuse(`funding event coin ${event.coin} is outside requested PnL scope`);
-    addField(asset, 'fundingCharge', event.fundingCharge);
+    addField(
+      asset,
+      'fundingCharge',
+      corrections.get(event.eventId)?.correctedFundingCharge ?? event.fundingCharge,
+    );
   }
 
   for (const [coin, position] of currentPositions) {
@@ -362,19 +445,24 @@ export async function getPnlSnapshot(
   }
 
   const [finalAccount, finalStateRaw, finalReplayBatchId, finalOrdinaryRaw, finalFundingIds,
-    finalOrderCount, finalFundingKeys, finalReplayRaw, finalFundingEventRaw] = await Promise.all([
+    finalCorrectionIds, finalOrderCount, finalFundingKeys, finalCorrectionKeys, finalReplayRaw,
+    finalFundingEventRaw, finalCorrectionRaw] = await Promise.all([
     dependencies.redis.hgetall(KEYS.USER_ACCOUNT(normalizedUser)),
     dependencies.clearinghouseState(normalizedUser),
     dependencies.redis.get(KEYS.HISTORICAL_REPLAY_INDEX(normalizedUser)),
     dependencies.redis.lrange(KEYS.USER_FILLS(normalizedUser), 0, -1),
     dependencies.redis.lrange(KEYS.PNL_FUNDING_EVENTS(normalizedUser), 0, -1),
+    dependencies.redis.lrange(KEYS.PNL_FUNDING_CORRECTIONS(normalizedUser), 0, -1),
     dependencies.redis.zcard(KEYS.USER_ORDERS(normalizedUser)),
     dependencies.redis.keys(KEYS.PNL_FUNDING_EVENT(normalizedUser, '*')),
+    dependencies.redis.keys(KEYS.PNL_FUNDING_CORRECTION(normalizedUser, '*')),
     replayBatchId
       ? dependencies.redis.get(KEYS.HISTORICAL_REPLAY_BATCH(normalizedUser, replayBatchId))
       : Promise.resolve(null),
     Promise.all(fundingIds.map((id) =>
       dependencies.redis.get(KEYS.PNL_FUNDING_EVENT(normalizedUser, id)))),
+    Promise.all(correctionIds.map((id) =>
+      dependencies.redis.get(KEYS.PNL_FUNDING_CORRECTION(normalizedUser, id)))),
   ]);
   const finalState = clearinghouseSchema.parse(finalStateRaw);
   if (
@@ -385,9 +473,13 @@ export async function getPnlSnapshot(
     || finalReplayRaw !== replayRaw
     || JSON.stringify(finalOrdinaryRaw) !== JSON.stringify(ordinaryRaw)
     || JSON.stringify(finalFundingIds) !== JSON.stringify(fundingIds)
+    || JSON.stringify(finalCorrectionIds) !== JSON.stringify(correctionIds)
     || JSON.stringify(finalFundingEventRaw) !== JSON.stringify(fundingEventRaw)
+    || JSON.stringify(finalCorrectionRaw) !== JSON.stringify(correctionRaw)
     || finalOrderCount !== orderCount
     || JSON.stringify(finalFundingKeys.slice().sort()) !== JSON.stringify(fundingKeys.slice().sort())
+    || JSON.stringify(finalCorrectionKeys.slice().sort())
+      !== JSON.stringify(correctionKeys.slice().sort())
   ) {
     refuse('paper account changed while the read-only PnL snapshot was being derived');
   }

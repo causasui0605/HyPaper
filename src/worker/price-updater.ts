@@ -62,6 +62,7 @@ export class PriceUpdater {
       'prevDayPx', ctx.prevDayPx ?? '',
       'dayNtlVlm', ctx.dayNtlVlm ?? '',
       'premium', ctx.premium ?? '',
+      'observedAt', Date.now().toString(),
     );
 
     const livePx = ctx.midPx ?? ctx.markPx;

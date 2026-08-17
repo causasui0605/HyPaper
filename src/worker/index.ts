@@ -123,6 +123,7 @@ export class Worker {
         'prevDayPx', ctx.prevDayPx ?? '',
         'dayNtlVlm', ctx.dayNtlVlm ?? '',
         'premium', ctx.premium ?? '',
+        'observedAt', Date.now().toString(),
         'coin', entry.name,
       );
     }
@@ -171,6 +172,7 @@ export class Worker {
           'prevDayPx', ctx.prevDayPx ?? '',
           'dayNtlVlm', ctx.dayNtlVlm ?? '',
           'premium', ctx.premium ?? '',
+          'observedAt', Date.now().toString(),
         );
       }
 

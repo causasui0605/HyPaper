@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RedisMock } from './helpers/redis-mock.js';
 import { getPnlSnapshot, type PnlDependencies } from '../engine/pnl.js';
 import { KEYS } from '../store/keys.js';
-import { pnlFundingEventId } from '../worker/funding-worker.js';
+import { pnlFundingCorrectionId, pnlFundingEventId } from '../worker/funding-worker.js';
 import type { HistoricalReplayResult } from '../types/historical-replay.js';
 import { D } from '../utils/math.js';
 
@@ -188,6 +189,58 @@ describe('read-only programme PnL snapshots', () => {
       szi: '0', markPx: null, replayRealizedPnl: '12', replayFees: '2',
       ordinaryRealizedPnl: '5', ordinaryFees: '1', fundingCharge: '0.5', totalPnl: '13.5',
     });
+  });
+
+  it('uses an immutable funding correction as the effective charge', async () => {
+    await enableReplay();
+    const originalEventId = await addFundingEvent(0, COINS[0], '1', 0);
+    const originalRaw = (await redis.get(
+      KEYS.PNL_FUNDING_EVENT(USER, originalEventId),
+    ))!;
+    const original = JSON.parse(originalRaw);
+    const correctionId = pnlFundingCorrectionId(
+      USER, 0, original.fundingTime, originalEventId,
+    );
+    const correction = {
+      schema: 'hypaper_pnl_funding_correction_v1',
+      kind: 'pnl_funding_correction',
+      paper: true,
+      correctionId,
+      originalEventId,
+      asset: 0,
+      coin: COINS[0],
+      fundingTime: original.fundingTime,
+      appliedAt: original.appliedAt + 1,
+      szi: '2',
+      originalFundingCharge: '1',
+      correctedOraclePx: '100',
+      correctedFundingRate: '0.01',
+      correctedFundingCharge: '2',
+      fundingChargeDelta: '1',
+      source: {
+        kind: 'verified_correction',
+        originalEventSha256: createHash('sha256').update(originalRaw).digest('hex'),
+        oracleSourceSha256: 'a'.repeat(64),
+        fundingSourceSha256: 'b'.repeat(64),
+      },
+      accountBalanceBefore: '10007.25',
+      accountBalanceAfter: '10006.25',
+      cumFundingBefore: '1',
+      cumFundingAfter: '2',
+      cumFundingSinceOpenBefore: '1',
+      cumFundingSinceOpenAfter: '2',
+      cumFundingSinceChangeBefore: '1',
+      cumFundingSinceChangeAfter: '2',
+    };
+    await redis.set(KEYS.PNL_FUNDING_CORRECTION(USER, correctionId), JSON.stringify(correction));
+    await redis.rpush(KEYS.PNL_FUNDING_CORRECTIONS(USER), correctionId);
+    await redis.hset(KEYS.USER_ACCOUNT(USER), 'balance', '10006.25');
+    currentState = state('10006.25');
+
+    const snapshot = await getPnlSnapshot(USER, COINS, dependencies);
+    expect(snapshot.totalPnl).toBe('6.25');
+    expect(snapshot.fundingEventCount).toBe(1);
+    expect(snapshot.assets[0].fundingCharge).toBe('2');
   });
 
   it('refuses activity without the immutable programme starting-balance replay', async () => {

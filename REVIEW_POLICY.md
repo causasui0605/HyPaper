@@ -89,6 +89,14 @@ not belong here.
   updates account/position funding fields and appends the immutable event as one
   application boundary. Same-bucket retries adopt the existing validated event
   without charging twice.
+- A verified historical correction never overwrites an immutable funding event.
+  It appends a separately typed correction bound to the original event bytes and
+  source digests, atomically applies only the charge difference to the paper
+  account and position funding fields, and exposes one effective funding row.
+- Scheduled funding is bound to an explicit UTC boundary and a fresh
+  post-boundary oracle context. Its rate comes from the venue's realized
+  `fundingHistory` row for that same boundary; an early timer, stale context,
+  missing realized row, or expired retry window cannot create an event.
 - For each requested asset, cumulative PnL is replay closed PnL plus ordinary
   closed PnL, minus replay and ordinary fees, minus durable funding charges,
   plus current unrealized PnL. The four-asset total must exactly equal current

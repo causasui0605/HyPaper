@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RedisMock } from './helpers/redis-mock.js';
 import { KEYS } from '../store/keys.js';
@@ -11,6 +12,9 @@ vi.mock('../store/redis.js', () => ({
 const mockConfig = {
   FUNDING_ENABLED: true,
   FUNDING_INTERVAL_MS: 28_800_000,
+  FUNDING_APPLY_DELAY_MS: 30_000,
+  FUNDING_MAX_LATE_MS: 55_000,
+  FUNDING_RETRY_MS: 5_000,
   FEES_ENABLED: false,
   FEE_RATE_TAKER: '0.00035',
   FEE_RATE_MAKER: '0.0001',
@@ -21,7 +25,11 @@ vi.mock('../config.js', () => ({
   config: mockConfig,
 }));
 
-const { FundingWorker, pnlFundingEventId } = await import('../worker/funding-worker.js');
+const {
+  FundingWorker,
+  pnlFundingCorrectionId,
+  pnlFundingEventId,
+} = await import('../worker/funding-worker.js');
 const { getUserFunding } = await import('../engine/funding-history.js');
 
 describe('FundingWorker', () => {
@@ -36,6 +44,9 @@ describe('FundingWorker', () => {
     redisMock.flushall();
     mockConfig.FUNDING_ENABLED = true;
     mockConfig.FUNDING_INTERVAL_MS = 28_800_000;
+    mockConfig.FUNDING_APPLY_DELAY_MS = 30_000;
+    mockConfig.FUNDING_MAX_LATE_MS = 55_000;
+    mockConfig.FUNDING_RETRY_MS = 5_000;
     worker = new FundingWorker();
   });
 
@@ -218,6 +229,155 @@ describe('FundingWorker', () => {
         type: 'funding', coin: COIN, usdc: '-5', szi: '1', fundingRate: '0.0001',
       },
     }]);
+  });
+
+  it('keeps the original event immutable and serves one corrected effective funding row', async () => {
+    const now = 1_800_000_123_456;
+    worker = new FundingWorker({ redis: redisMock, now: () => now });
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000', '0.0001');
+    await worker.applyFunding();
+    const fundingTime = Math.floor(now / mockConfig.FUNDING_INTERVAL_MS)
+      * mockConfig.FUNDING_INTERVAL_MS;
+    const originalEventId = pnlFundingEventId(USER, ASSET, fundingTime);
+    const originalRaw = (await redisMock.get(
+      KEYS.PNL_FUNDING_EVENT(USER, originalEventId),
+    ))!;
+    const source = {
+      kind: 'verified_correction' as const,
+      originalEventSha256: createHash('sha256').update(originalRaw).digest('hex'),
+      oracleSourceSha256: 'a'.repeat(64),
+      fundingSourceSha256: 'b'.repeat(64),
+    };
+
+    await expect(worker.applyFundingCorrection({
+      userId: USER,
+      asset: ASSET,
+      coin: COIN,
+      fundingTime,
+      appliedAt: now + 1,
+      expectedSzi: '1',
+      correctedOraclePx: '50000',
+      correctedFundingRate: '0.0002',
+      source,
+    })).resolves.toBe('applied');
+    await expect(redisMock.get(KEYS.PNL_FUNDING_EVENT(USER, originalEventId)))
+      .resolves.toBe(originalRaw);
+    await expect(redisMock.hget(KEYS.USER_ACCOUNT(USER), 'balance')).resolves.toBe('99990');
+    await expect(redisMock.hget(KEYS.USER_POS(USER, ASSET), 'cumFunding')).resolves.toBe('10');
+    await expect(getUserFunding(USER, fundingTime, fundingTime, redisMock)).resolves.toEqual([{
+      time: fundingTime,
+      hash: pnlFundingCorrectionId(USER, ASSET, fundingTime, originalEventId),
+      delta: {
+        type: 'funding', coin: COIN, usdc: '-10', szi: '1', fundingRate: '0.0002',
+      },
+    }]);
+
+    await expect(worker.applyFundingCorrection({
+      userId: USER,
+      asset: ASSET,
+      coin: COIN,
+      fundingTime,
+      appliedAt: now + 2,
+      expectedSzi: '1',
+      correctedOraclePx: '50000',
+      correctedFundingRate: '0.0002',
+      source,
+    })).resolves.toBe('retry');
+    await expect(redisMock.hget(KEYS.USER_ACCOUNT(USER), 'balance')).resolves.toBe('99990');
+  });
+
+  it('refuses a correction that is not bound to the immutable original bytes', async () => {
+    const now = 1_800_000_123_456;
+    worker = new FundingWorker({ redis: redisMock, now: () => now });
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000', '0.0001');
+    await worker.applyFunding();
+    const fundingTime = Math.floor(now / mockConfig.FUNDING_INTERVAL_MS)
+      * mockConfig.FUNDING_INTERVAL_MS;
+    await expect(worker.applyFundingCorrection({
+      userId: USER,
+      asset: ASSET,
+      coin: COIN,
+      fundingTime,
+      appliedAt: now + 1,
+      expectedSzi: '1',
+      correctedOraclePx: '50000',
+      correctedFundingRate: '0.0002',
+      source: {
+        kind: 'verified_correction',
+        originalEventSha256: 'f'.repeat(64),
+        oracleSourceSha256: 'a'.repeat(64),
+        fundingSourceSha256: 'b'.repeat(64),
+      },
+    })).rejects.toThrow(/SHA-256 conflicts/);
+    await expect(redisMock.hget(KEYS.USER_ACCOUNT(USER), 'balance')).resolves.toBe('99995');
+  });
+
+  it('binds a scheduled attempt to the intended boundary despite an early timer callback', async () => {
+    const interval = mockConfig.FUNDING_INTERVAL_MS;
+    let now = interval - 9;
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    worker = new FundingWorker({
+      redis: redisMock,
+      now: () => now,
+      setTimer: (callback, delay) => {
+        timers.push({ callback, delay });
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => undefined,
+      fundingRateAt: async (_coin, fundingTime) => ({
+        rate: '0.0002', observedTime: fundingTime + 1,
+      }),
+    });
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000', '0.0001');
+    worker.start();
+    expect(timers[0].delay).toBe(mockConfig.FUNDING_APPLY_DELAY_MS + 9);
+
+    now = interval + mockConfig.FUNDING_APPLY_DELAY_MS - 1;
+    timers.shift()!.callback();
+    expect(timers[0].delay).toBe(1);
+    await expect(redisMock.llen(KEYS.PNL_FUNDING_EVENTS(USER))).resolves.toBe(0);
+
+    now += 1;
+    await redisMock.hset(KEYS.MARKET_CTX(COIN), 'observedAt', now.toString());
+    timers.shift()!.callback();
+    await vi.waitFor(async () => {
+      await expect(redisMock.llen(KEYS.PNL_FUNDING_EVENTS(USER))).resolves.toBe(1);
+    });
+    const [id] = await redisMock.lrange(KEYS.PNL_FUNDING_EVENTS(USER), 0, -1);
+    const event = JSON.parse((await redisMock.get(KEYS.PNL_FUNDING_EVENT(USER, id)))!);
+    expect(event.fundingTime).toBe(interval);
+    expect(event.fundingRate).toBe('0.0002');
+    expect(event.source).toEqual({
+      kind: 'live_boundary_snapshot',
+      fundingHistoryTime: interval + 1,
+      contextObservedAt: now,
+    });
+    worker.stop();
+  });
+
+  it('adopts the current boundary when restarted inside its authorized window', () => {
+    const interval = mockConfig.FUNDING_INTERVAL_MS;
+    const now = interval + 10_000;
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    worker = new FundingWorker({
+      redis: redisMock,
+      now: () => now,
+      setTimer: (callback, delay) => {
+        timers.push({ callback, delay });
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => undefined,
+    });
+    worker.start();
+    expect(timers).toHaveLength(1);
+    expect(timers[0].delay).toBe(mockConfig.FUNDING_APPLY_DELAY_MS - 10_000);
+    worker.stop();
   });
 
   it('does not let one malformed position suppress an independent valid funding event', async () => {
