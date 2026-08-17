@@ -316,6 +316,45 @@ describe('FundingWorker', () => {
     await expect(redisMock.hget(KEYS.USER_ACCOUNT(USER), 'balance')).resolves.toBe('99995');
   });
 
+  it('keeps very small corrected funding rates in canonical non-exponent form', async () => {
+    const now = 1_800_000_123_456;
+    worker = new FundingWorker({ redis: redisMock, now: () => now });
+    await seedUser('100000');
+    await setPosition('1', '50000');
+    await setMarketCtx(COIN, '50000', '0.0001');
+    await worker.applyFunding();
+    const fundingTime = Math.floor(now / mockConfig.FUNDING_INTERVAL_MS)
+      * mockConfig.FUNDING_INTERVAL_MS;
+    const originalEventId = pnlFundingEventId(USER, ASSET, fundingTime);
+    const originalRaw = (await redisMock.get(
+      KEYS.PNL_FUNDING_EVENT(USER, originalEventId),
+    ))!;
+
+    await expect(worker.applyFundingCorrection({
+      userId: USER,
+      asset: ASSET,
+      coin: COIN,
+      fundingTime,
+      appliedAt: now + 1,
+      expectedSzi: '1',
+      correctedOraclePx: '50000',
+      correctedFundingRate: '0.000000008',
+      source: {
+        kind: 'verified_correction',
+        originalEventSha256: createHash('sha256').update(originalRaw).digest('hex'),
+        oracleSourceSha256: 'a'.repeat(64),
+        fundingSourceSha256: 'b'.repeat(64),
+      },
+    })).resolves.toBe('applied');
+    await expect(getUserFunding(USER, fundingTime, fundingTime, redisMock)).resolves.toEqual([{
+      time: fundingTime,
+      hash: pnlFundingCorrectionId(USER, ASSET, fundingTime, originalEventId),
+      delta: {
+        type: 'funding', coin: COIN, usdc: '-0.0004', szi: '1', fundingRate: '0.000000008',
+      },
+    }]);
+  });
+
   it('binds a scheduled attempt to the intended boundary despite an early timer callback', async () => {
     const interval = mockConfig.FUNDING_INTERVAL_MS;
     let now = interval - 9;

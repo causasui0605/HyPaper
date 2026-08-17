@@ -214,7 +214,10 @@ function canonicalDecimal(raw: string, label: string): string {
   try {
     const value = D(raw);
     if (!value.isFinite()) throw new Error('not finite');
-    return value.toString();
+    // Decimal#toString switches to exponent notation below its configured
+    // threshold. Durable PnL schemas intentionally allow only ordinary decimal
+    // strings, so normalize without an exponent before schema validation.
+    return value.toFixed();
   } catch {
     throw new Error(`${label} must be a finite decimal string`);
   }
