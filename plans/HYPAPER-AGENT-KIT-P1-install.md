@@ -1,6 +1,6 @@
 # HYPAPER-AGENT-KIT-P1: repository-local Codex agent-kit prerequisite
 
-- status: ready
+- status: in-progress
 - owner: HyPaper infrastructure
 - date: 2026-09-14
 - adoption base: `08651873dbf6cc5767ff33dc1116cadaeffcb79d`
@@ -112,5 +112,41 @@ promotion, main merge, or push.
 
 ## Next
 
-Run the canonical install transaction, configure only the frozen project gate,
-validate the installed pipeline, and stop before CASH-F7 implementation.
+Obtain explicit authority to change only the dedicated external reviewer
+profile model from `fable[1m]` to `opus`, then rerun the no-product reviewer
+identity check and mark this prerequisite implemented.
+
+## Installation result
+
+- Pre-install freeze commit/tree:
+  `190738563c92faafb294398e339a818441a985dc` /
+  `5db0d923db7b3061ef3fd77e80b196a8d46caa6f`; target status was empty.
+- Canonical installer completed from the frozen clean source revision. Its
+  version-2 install record is archived outside the worktree at
+  `/Users/dylan/kit_archives/hypaper/HYPAPER-AGENT-KIT-P1/20260914T164245Z`;
+  `install-manifest.txt` SHA-256 is
+  `b6d1afb549a8345d4b7df7f9ef572502c99714916e8176dd3a785df6ee451e8b`
+  and the captured pre-status SHA-256 is the empty digest
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- All 49 source-owned copied paths were byte/mode identical; the sole derived
+  installed path was the project gate configuration. No unexpected path was
+  created. `upgrade.sh --check` returned `RESULT=current` with only the
+  expected dirty-worktree warning before the install commit.
+- Real-directory/tmp subtree and mode-0600 write/delete probe: PASS. Primary
+  and fallback reviewer-wrapper self-tests, review-bundle self-test,
+  audit-manifest self-test, and generic-capture tests (59) all PASS.
+- Project gates: `npm run build` PASS; `npm run test:run` PASS (17 files,
+  262 tests). Archive root is the real non-symlink directory
+  `/Users/dylan/kit_archives/hypaper`.
+- Registered implementer and numeric verifier are installed at exact source
+  postimages `5fff101e1548233f11b472384b4826ab6cf8c900a643c2f47dc9b4fdf09e4fe8`
+  and `0a7cf816a201abfeaf29f92b29642a3167e52f3d52b7befc079eb114497bca4b`.
+  The isolated Claude reviewer wrapper postimage is
+  `3e675b2dd4b393d9a91199a28e9da370c7aa95f0e5ac4d708ca4f153f63e1ced`.
+- The dedicated reviewer identity is authenticated, but its external
+  project-independent settings currently select `fable[1m]`, not the required
+  Opus model. That settings file is outside this exact repository-local install
+  manifest, so it was not modified. No live reviewer request was made.
+- The new `.codex` agents and hooks require a fresh Codex session before the
+  installed custom-agent surface can be used. CASH-F7 remains draft and no
+  product implementation or provider/runtime action occurred.

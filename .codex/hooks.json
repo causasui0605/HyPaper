@@ -1,0 +1,31 @@
+{
+  "description": "Codex agent-kit lifecycle gates.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "e=\"${CODEX_PROJECT_DIR:-}\"; if [ -n \"$e\" ]; then [ -d \"$e\" ] || { echo \"invalid Codex project directory: $e\" >&2; exit 2; }; e=\"$(cd \"$e\" && pwd -P)\" || { echo \"cannot resolve Codex project directory: $e\" >&2; exit 2; }; fi; p=\"$(pwd -P)\" || exit 2; if [ -n \"$e\" ]; then case \"$p/\" in \"$e/\"*) ;; *) p=\"$e\" ;; esac; fi; s=\"$p\"; g=\"$(git -C \"$p\" rev-parse --show-toplevel 2>/dev/null || :)\"; if [ -n \"$g\" ]; then g=\"$(cd \"$g\" && pwd -P)\" || { echo \"cannot resolve Git worktree root: $g\" >&2; exit 2; }; case \"$p/\" in \"$g/\"*) ;; *) echo \"hook start escapes resolved Git worktree root: $p is not under $g\" >&2; exit 2 ;; esac; else g=\"${e:-$p}\"; fi; while :; do d=\"$p/.codex/hooks\"; h=\"$d/check-reviewer.sh\"; if [ -e \"$d\" ] || [ -L \"$d\" ]; then [ -d \"$d\" ] && [ ! -L \"$d\" ] && [ -f \"$h\" ] && [ ! -L \"$h\" ] && [ -x \"$h\" ] || { echo \"nearest Codex policy hook is missing, unsafe, or not executable: $h\" >&2; exit 2; }; exec \"$h\"; fi; [ \"$p\" = / ] && break; [ \"$p\" = \"$g\" ] && break; n=\"$(dirname \"$p\")\"; [ \"$n\" != \"$p\" ] || break; p=\"$n\"; done; echo \"no active .codex/hooks/check-reviewer.sh from $s to $g\" >&2; exit 2",
+            "timeout": 90,
+            "statusMessage": "Checking the Claude review engine"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "^implementer$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "e=\"${CODEX_PROJECT_DIR:-}\"; if [ -n \"$e\" ]; then [ -d \"$e\" ] || { echo \"invalid Codex project directory: $e\" >&2; exit 2; }; e=\"$(cd \"$e\" && pwd -P)\" || { echo \"cannot resolve Codex project directory: $e\" >&2; exit 2; }; fi; p=\"$(pwd -P)\" || exit 2; if [ -n \"$e\" ]; then case \"$p/\" in \"$e/\"*) ;; *) p=\"$e\" ;; esac; fi; s=\"$p\"; g=\"$(git -C \"$p\" rev-parse --show-toplevel 2>/dev/null || :)\"; if [ -n \"$g\" ]; then g=\"$(cd \"$g\" && pwd -P)\" || { echo \"cannot resolve Git worktree root: $g\" >&2; exit 2; }; case \"$p/\" in \"$g/\"*) ;; *) echo \"hook start escapes resolved Git worktree root: $p is not under $g\" >&2; exit 2 ;; esac; else g=\"${e:-$p}\"; fi; while :; do d=\"$p/.codex/hooks\"; h=\"$d/gate-implementer.sh\"; if [ -e \"$d\" ] || [ -L \"$d\" ]; then [ -d \"$d\" ] && [ ! -L \"$d\" ] && [ -f \"$h\" ] && [ ! -L \"$h\" ] && [ -x \"$h\" ] || { echo \"nearest Codex policy hook is missing, unsafe, or not executable: $h\" >&2; exit 2; }; exec \"$h\"; fi; [ \"$p\" = / ] && break; [ \"$p\" = \"$g\" ] && break; n=\"$(dirname \"$p\")\"; [ \"$n\" != \"$p\" ] || break; p=\"$n\"; done; echo \"no active .codex/hooks/gate-implementer.sh from $s to $g\" >&2; exit 2",
+            "timeout": 900,
+            "statusMessage": "Running implementation gates"
+          }
+        ]
+      }
+    ]
+  }
+}

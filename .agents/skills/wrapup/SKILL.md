@@ -1,0 +1,17 @@
+---
+name: wrapup
+description: End-of-session state externalization. Appends what was done, decided, and what is next to the plan document and — per the repo's gate.conf ledger contract — the decision ledger, then commits. Invoke as $wrapup before ending any working session.
+---
+
+Externalize this session's state so any future session — including one started from the phone — can resume without this chat's scrollback.
+
+1. Summarize from this session: (a) what was completed, (b) decisions made and why, (c) the single next concrete step, (d) open blockers.
+2. Record each item in (b) per the repo's ledger contract in `.codex/hooks/gate.conf`: `DECISION_LEDGER` names the file the pipeline writes (default `DECISIONS.md`); `DECISION_LEDGER_MODE` is `append` or `pm-promoted` (default `append`; absent file or variables = defaults). `append`: append one line to the named ledger: `YYYY-MM-DD | <scope> | <decision> | <reason>`. `pm-promoted`: the named ledger is human-curated (formal entries, e.g. D-NNN) — do NOT write it; fold the item into the plan document's `notes:` and draft the ledger entry as a proposal in your final message for the PM. The mode governs only the named file; other ledgers in the repo (including frozen historical ones) do not change it. Only real decisions — not an activity log. Zero decisions is a normal outcome.
+3. Update the active plan document: the relevant milestone's `status:`/`notes:` fields, and the `## Next` line with (c). Fold (d) into notes.
+4. **Unreviewed-landings check.** Anchor = the previous `wrapup:` commit on the current shared branch (identified by its message prefix; if none, the branch creation point). Enumerate tracked commits since the anchor that carry NO review record, where a review record is any of: (i) a `$milestone` close-out commit (message contains `[implemented+reviewed]`); (ii) a commit whose reviewed diff is bound to a run archive via its recorded `patch_digest` under an `approve` verdict — computed over the commit's diff with the SAME declared exclusions the review used (close-out bookkeeping files excluded), since whole-commit equality never holds; (iii) an explicit review record in the plan document's notes naming the commit. List the remainder in the wrapup report as `UNREVIEWED LANDINGS` (commit + files) and record the list in the plan notes. This adds visibility only: it authorizes nothing, changes no permissions, and the mandatory `$review`-before-landing route is unchanged.
+
+5. **Scout-number backstop (P0-a).** Additionally enumerate durable landings since the anchor (commits, `plans/*` notes) that carry a research NUMBER with no content-bound `audited` record — i.e. no `AUDIT_VERDICT: audited` whose `manifest_digest` binds to that number's source via the `$review research-audit` gate. List these as `SCOUT NUMBERS` (number + where it landed) in the report and the plan notes; they remain `unverified-scout` under the milestone EDA prohibitions (never quoted as a result, used as a premise, or setting scope/thresholds/criteria/decisions) until audited. This is the backstop; the main gate is the default-scout state at the moment a number crosses into a durable/reported output, not this end-of-session sweep.
+6. `git add plans/ <DECISION_LEDGER> && git commit -m "wrapup: <one-line summary>"` (omit the ledger when `DECISION_LEDGER_MODE=pm-promoted` or this session did not write it).
+7. Echo the `## Next` line back to the user as your final message.
+
+Rule: the plan document is the memory; the chat is not. If it is not written down there, it did not happen.

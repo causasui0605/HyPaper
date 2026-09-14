@@ -1,0 +1,91 @@
+# Per-repo gate configuration, sourced by .codex/hooks/gate-implementer.sh.
+# Copy to .codex/hooks/gate.conf in each repo and edit. Versioned in git; trusted code.
+
+# The check suite the implementer must pass before it may finish.
+# Rust example:
+GATE_CHECKS=(
+  "cargo test --workspace"
+  "cargo clippy --workspace --all-targets -- -D warnings"
+)
+
+# Python example:
+# GATE_CHECKS=(
+#   "python -m pytest -q"
+#   "ruff check ."
+# )
+
+# Paths excluded from the secrets scan (git pathspecs relative to repo root).
+# Use for fixture files with long hex constants that false-positive the scan.
+GATE_SECRET_EXCLUDE=(
+  # "tests/fixtures"
+  # "data/golden"
+)
+
+# Third-party review engine invoked by $milestone step 2. It receives the full
+# review prompt as its single argument; stdout is captured and parsed for the
+# REVIEW_VERDICT block. Default when unset:
+# .codex/hooks/reviewer-claude.sh
+# No GNU `timeout` wrapper: it does not exist on a stock macOS host and its
+# absence breaks the invocation silently — the wall-clock ceiling is enforced
+# INSIDE .codex/hooks/run-reviewer.sh (REVIEW_TIMEOUT_SECS below); any
+# tool-level ceiling on the background task running that helper must exceed
+# REVIEW_TIMEOUT_SECS plus a ~60s margin, or be absent. The wrapper gives
+# Claude a dedicated CLAUDE_CONFIG_DIR (default ~/.claude-reviewer), launches
+# it from a disposable neutral cwd under --safe-mode, plan permissions,
+# read-only tools, and no session persistence. Keep both layers: the dedicated
+# home prevents the normal developer profile from being read or synchronized;
+# --safe-mode disables CLAUDE.md, skills, plugins, hooks, MCP, and agents while
+# retaining reviewer authentication. The SessionStart probe smoke-tests one
+# real invocation, so missing reviewer auth or a broken command surfaces at
+# startup, not mid-milestone.
+REVIEWER_CMD=".codex/hooks/reviewer-claude.sh"
+
+# Fallback chain used only after explicit human consent when REVIEWER_CMD is
+# unavailable (including subscription quota exhaustion). This same-vendor
+# external CLI is tried before the built-in `reviewer_fallback` agent because
+# its dedicated home + ignored config preserve instruction isolation. If it
+# also fails, the built-in agent remains the last-resort availability path and
+# its weaker independence is recorded in the archive.
+FALLBACK_REVIEWER_CMD=".codex/hooks/reviewer-codex.sh"
+
+# Optional: an alternate command for the startup smoke test only. Reviews
+# always use REVIEWER_CMD unchanged.
+# Must invoke the same engine binary as REVIEWER_CMD; a mismatched command is
+# ignored (the probe exists to test the review engine, nothing else).
+# GATE_SMOKE_CMD=".codex/hooks/reviewer-claude.sh"
+
+# Seconds the smoke invocation may run before it is killed and marked degraded.
+# Must stay below the SessionStart hook timeout in hooks.json; raise together.
+# GATE_SMOKE_CAP=60
+
+# ── Decision-ledger contract (consumed by $milestone, $review, $wrapup) ──
+# DECISION_LEDGER: the file the pipeline writes session/milestone decisions to.
+# DECISION_LEDGER_MODE:
+#   append       — pipeline appends one-liners directly (default).
+#   pm-promoted  — the NAMED ledger is human-curated (e.g. formal D-NNN
+#                  entries); the pipeline never writes it: decisions go to the
+#                  plan document's notes:, ledger entries are drafted as
+#                  proposals in the report for the PM to promote.
+# The mode governs ONLY the file named here. Other ledgers in the repo
+# (including frozen historical ones) do not change it. Absent variables or
+# absent file = defaults (DECISIONS.md, append).
+DECISION_LEDGER="DECISIONS.md"
+DECISION_LEDGER_MODE="append"
+
+# REVIEW_TIMEOUT_SECS: watchdog ceiling for one external-review attempt,
+# enforced by .codex/hooks/run-reviewer.sh via polling (never a GNU `timeout`
+# wrapper — stock macOS lacks it). On expiry the whole reviewer process group
+# is TERMed, then KILLed, and the attempt is archived as infrastructure
+# failure (it never counts as a verdict). Default 1800 (~2-3x observed
+# deep-reasoning review durations on ~2k-line patches). The orchestrator runs
+# run-reviewer.sh as a background task; any tool-level ceiling on that task
+# must exceed this value plus a ~60s cleanup margin, or be absent.
+REVIEW_TIMEOUT_SECS=1800
+
+# ARCHIVE_ROOT: where $milestone and $review run archives live. Default
+# (unset) = <installed-policy-project-root>/agent_runs/. For a policy installed
+# in a nested layer, this means that layer's project root, not the outer Git
+# worktree root. Resolved physically (realpath); must be OUTSIDE the worktree
+# or confirmed ignored by `git check-ignore`, so the close-out commit can never
+# sweep archives in. Point it at a stable location for disposable worktrees.
+#ARCHIVE_ROOT="$HOME/kit_archives/<repo-name>"

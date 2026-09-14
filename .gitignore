@@ -5,3 +5,5 @@ drizzle/
 *.log
 
 .claude
+.codex/tmp/
+agent_runs/

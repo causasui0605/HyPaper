@@ -1,0 +1,4 @@
+interface:
+  display_name: "Take Over Claude Work"
+  short_description: "Resume unfinished work from Claude-managed projects"
+  default_prompt: "Use $takeover to inspect and safely continue the active Claude milestone in this repository."

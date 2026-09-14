@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "argv_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "capture_binding": {
+      "$ref": "#/$defs/pathBinding"
+    },
+    "cwd_binding": {
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "type": "integer"
+        },
+        "inode": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "integer"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "device",
+        "inode",
+        "mode",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "environment_keys": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "environment_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "expected_return_codes": {
+      "items": {
+        "type": "integer"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "files": {
+      "additionalProperties": false,
+      "properties": {
+        "rc.txt": {
+          "$ref": "#/$defs/fileBinding"
+        },
+        "stderr.bin": {
+          "$ref": "#/$defs/fileBinding"
+        },
+        "stdout.bin": {
+          "$ref": "#/$defs/fileBinding"
+        }
+      },
+      "required": [
+        "stdout.bin",
+        "stderr.bin",
+        "rc.txt"
+      ],
+      "type": "object"
+    },
+    "invocation_id": {
+      "type": "string"
+    },
+    "popen_count": {
+      "const": 1
+    },
+    "request_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "retry_count": {
+      "const": 0
+    },
+    "returncode": {
+      "type": "integer"
+    },
+    "runtime_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "invocation_id",
+    "request_sha256",
+    "argv_sha256",
+    "cwd_binding",
+    "capture_binding",
+    "environment_keys",
+    "environment_sha256",
+    "expected_return_codes",
+    "returncode",
+    "popen_count",
+    "retry_count",
+    "runtime_sha256",
+    "files"
+  ],
+  "type": "object",
+  "$defs": {
+    "fileBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "type": "integer"
+        },
+        "inode": {
+          "type": "integer"
+        },
+        "mode": {
+          "const": 292
+        },
+        "nlink": {
+          "const": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "device",
+        "inode",
+        "mode",
+        "nlink",
+        "sha256",
+        "size"
+      ],
+      "type": "object"
+    },
+    "pathBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "type": "integer"
+        },
+        "inode": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "device",
+        "inode",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    }
+  }
+}
