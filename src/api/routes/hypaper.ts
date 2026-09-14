@@ -17,13 +17,67 @@ import {
 } from '../../types/historical-replay.js';
 import { getPnlSnapshot, PnlSnapshotError } from '../../engine/pnl.js';
 import { getPnlSnapshotRequestSchema } from '../../types/pnl.js';
+import {
+  CashLedgerEvidenceError,
+  getCashLedgerEvidence,
+} from '../../engine/cash-ledger-evidence.js';
+import {
+  CASH_LEDGER_EVIDENCE_ERROR_SCHEMA,
+  cashLedgerEvidenceRequestSchema,
+  encodeCashLedgerEvidenceReceipt,
+} from '../../types/cash-ledger-evidence.js';
 
 export const hypaperRouter = new Hono();
 
 hypaperRouter.post('/', async (c) => {
-  const body = await c.req.json();
-  const type: string = body.type;
-  const user: string | undefined = body.user;
+  const rawBody: unknown = await c.req.json();
+  const body = rawBody as Record<string, unknown>;
+  const type = rawBody !== null && typeof rawBody === 'object' && !Array.isArray(rawBody)
+    && typeof (rawBody as Record<string, unknown>).type === 'string'
+    ? (rawBody as Record<string, unknown>).type
+    : undefined;
+
+  if (type === 'getCashLedgerEvidence') {
+    if (!config.CASH_LEDGER_EVIDENCE_ENABLED) {
+      return c.json({
+        schema_version: CASH_LEDGER_EVIDENCE_ERROR_SCHEMA,
+        status: 'disabled',
+        error_code: 'disabled',
+      }, 403);
+    }
+    try {
+      const request = cashLedgerEvidenceRequestSchema.parse(rawBody);
+      const receipt = await getCashLedgerEvidence(request);
+      const bytes = encodeCashLedgerEvidenceReceipt(receipt);
+      return new Response(bytes, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    } catch (err) {
+      logger.warn({ type }, 'Cash ledger evidence refused');
+      if (err instanceof CashLedgerEvidenceError) {
+        return c.json({
+          schema_version: CASH_LEDGER_EVIDENCE_ERROR_SCHEMA,
+          status: err.status === 500 ? 'error' : 'refused',
+          error_code: err.code,
+        }, err.status);
+      }
+      if (err instanceof ZodError) {
+        return c.json({
+          schema_version: CASH_LEDGER_EVIDENCE_ERROR_SCHEMA,
+          status: 'refused',
+          error_code: 'invalid_request',
+        }, 400);
+      }
+      return c.json({
+        schema_version: CASH_LEDGER_EVIDENCE_ERROR_SCHEMA,
+        status: 'error',
+        error_code: 'internal',
+      }, 500);
+    }
+  }
+
+  const user: string | undefined = typeof body?.user === 'string' ? body.user : undefined;
 
   if (!type) {
     return c.json({ error: 'Missing type' }, 400);

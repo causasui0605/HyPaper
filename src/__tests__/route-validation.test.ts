@@ -9,6 +9,7 @@ const mockConfig = vi.hoisted(() => ({
   LOG_LEVEL: 'silent',
   HISTORICAL_REPLAY_ENABLED: false,
   PNL_SNAPSHOT_ENABLED: false,
+  CASH_LEDGER_EVIDENCE_ENABLED: false,
   FEE_RATE_TAKER: '0.00035',
 }));
 
@@ -62,6 +63,7 @@ describe('route validation', () => {
     vi.clearAllMocks();
     mockConfig.HISTORICAL_REPLAY_ENABLED = false;
     mockConfig.PNL_SNAPSHOT_ENABLED = false;
+    mockConfig.CASH_LEDGER_EVIDENCE_ENABLED = false;
   });
 
   it('rejects NaN order sizes on /exchange', async () => {
@@ -225,6 +227,61 @@ describe('route validation', () => {
     await expect(res.json()).resolves.toEqual({
       error: 'Missing or invalid balance (must be a finite non-negative number)',
     });
+  });
+
+  it('returns the strict disabled evidence envelope before ensureAccount', async () => {
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'getCashLedgerEvidence', user: '0xAbC', dex: 'xyz', coins: ['xyz:CL'],
+        coverageStartMs: 0, coverageEndMs: 0, finalFlatRequired: true,
+      }),
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      schema_version: 'HYPAPER_CASH_LEDGER_EVIDENCE_ERROR_V1', status: 'disabled', error_code: 'disabled',
+    });
+    expect(ensureAccount).not.toHaveBeenCalled();
+  });
+
+  it('rejects hostile evidence requests without account access', async () => {
+    mockConfig.CASH_LEDGER_EVIDENCE_ENABLED = true;
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'getCashLedgerEvidence', user: '0xabc', dex: 'xyz', coins: ['xyz:CL', 'xyz:CL'],
+        coverageStartMs: 0, coverageEndMs: 0, finalFlatRequired: true, extra: true,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      schema_version: 'HYPAPER_CASH_LEDGER_EVIDENCE_ERROR_V1', status: 'refused', error_code: 'invalid_request',
+    });
+    expect(ensureAccount).not.toHaveBeenCalled();
+  });
+
+  it('redacts provider identity errors and never reaches ensureAccount', async () => {
+    mockConfig.CASH_LEDGER_EVIDENCE_ENABLED = true;
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'getCashLedgerEvidence', user: '0xSecret', dex: 'xyz', coins: ['xyz:CL'],
+        coverageStartMs: 0, coverageEndMs: 0, finalFlatRequired: true,
+      }),
+    });
+    expect(res.status).toBe(409);
+    const response = await res.json();
+    expect(response).toEqual({
+      schema_version: 'HYPAPER_CASH_LEDGER_EVIDENCE_ERROR_V1', status: 'refused', error_code: 'identity',
+    });
+    expect(JSON.stringify(response)).not.toContain('0xSecret');
+    expect(ensureAccount).not.toHaveBeenCalled();
   });
 
   it('rejects negative balances on /hypaper setBalance', async () => {

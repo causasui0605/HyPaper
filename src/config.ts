@@ -27,6 +27,22 @@ const envSchema = z.object({
   HISTORICAL_REPLAY_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   // Read-only programme PnL snapshots are unavailable unless the paper host opts in.
   PNL_SNAPSHOT_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  // Settled-USDC/oracle-funding evidence is unavailable unless the paper host opts in.
+  CASH_LEDGER_EVIDENCE_ENABLED: z.enum(['true', 'false']).default('false')
+    .transform((value) => value === 'true'),
+  HYPAPER_SOURCE_REVISION: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+  HYPAPER_IMAGE_DIGEST: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+  HYPAPER_COMPOSE_CONFIG_DIGEST: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  CASH_LEDGER_EVIDENCE_CORRECTION_FINALITY_MS: z.string()
+    .regex(/^(?:0|[1-9][0-9]*)$/)
+    .transform(Number)
+    .refine((value) => Number.isSafeInteger(value) && value > 0)
+    .optional(),
+  CASH_LEDGER_EVIDENCE_MAX_ROWS: z.string()
+    .regex(/^(?:0|[1-9][0-9]*)$/)
+    .transform(Number)
+    .refine((value) => Number.isSafeInteger(value) && value > 0)
+    .optional(),
   FUNDING_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   FUNDING_INTERVAL_MS: z.coerce.number().default(3_600_000),
   FUNDING_APPLY_DELAY_MS: z.coerce.number().default(30_000),
@@ -38,6 +54,20 @@ const envSchema = z.object({
   // Poll interval for extra-dex metaAndAssetCtxs (mids/mark/funding refresh
   // belt in addition to the per-dex allMids WS subscription).
   EXTRA_DEX_CTX_REFRESH_MS: z.coerce.number().default(15_000),
+}).superRefine((value, ctx) => {
+  if (!value.CASH_LEDGER_EVIDENCE_ENABLED) return;
+  const required: Array<keyof typeof value> = [
+    'HYPAPER_SOURCE_REVISION',
+    'HYPAPER_IMAGE_DIGEST',
+    'HYPAPER_COMPOSE_CONFIG_DIGEST',
+    'CASH_LEDGER_EVIDENCE_CORRECTION_FINALITY_MS',
+    'CASH_LEDGER_EVIDENCE_MAX_ROWS',
+  ];
+  for (const key of required) {
+    if (value[key] === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is required when cash ledger evidence is enabled` });
+    }
+  }
 });
 
 export const extraDexList = (raw: string): string[] =>

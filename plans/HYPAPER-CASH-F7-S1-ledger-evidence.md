@@ -1,6 +1,6 @@
 # HYPAPER-CASH-F7-S1: settled-USDC and ORACLE-funding evidence
 
-- status: ready
+- status: implemented
 - numeric: true
 - owner: HyPaper
 - date: 2026-09-14
@@ -284,8 +284,7 @@ dependency.
 
 ## Candidate allowed paths
 
-These paths are proposed for a future `draft -> ready` implementation. This
-draft does not activate them:
+The reviewed implementation is confined to these paths:
 
 - `src/types/cash-ledger-evidence.ts`
 - `src/engine/cash-ledger-evidence.ts`
@@ -327,6 +326,51 @@ widening this milestone.
    signed funding aggregate, settled-USDC equation, and zero residual without
    importing production implementation or test expected values.
 
+## Numeric checks
+
+The independent numeric verifier must derive every reference result without
+importing the production implementation or test assertions as an oracle. All
+Decimal quantities below use absolute tolerance `0`; booleans and inventory
+counts require exact equality. The named fixture builders identify inputs only.
+
+1. Original `xyz:CL` funding charge: apply `szi * recorded ORACLE * funding
+   rate` to `seedEvidence` (`1`, `100`, `0.01`); expected `1`.
+2. Original `xyz:NATGAS` funding charge: apply the same convention to the
+   NATGAS row in `seedTwoCoinEvidence` (`1`, `100`, `0.01`); expected `1`.
+3. Corrected `xyz:CL` funding charge: apply `szi * corrected recorded ORACLE *
+   corrected funding rate` to `seedCorrectionEvidence` (`1`, `200`, `0.01`);
+   expected `2`.
+4. `xyz:CL` correction delta: corrected charge minus original charge in
+   `seedCorrectionEvidence`; expected `1`.
+5. Signed effective funding aggregate: sum original charges plus correction
+   deltas for `[seedEvidence, seedCorrectionEvidence, replay-fee mutation,
+   seedTwoCoinEvidence]`; expected `[1, 2, 1, 2]` componentwise.
+6. Starting balance: immutable replay `startingBalance` for those four
+   scenarios; expected `[10000, 10000, 10000, 10000]` componentwise.
+7. Replay final balance: starting balance plus replay realized PnL minus replay
+   fees for those scenarios; expected `[10000, 10000, 9999, 10000]`.
+8. Replay realized PnL: sum immutable replay-event `closedPnl`; expected
+   `[0, 0, 0, 0]`.
+9. Ordinary realized PnL: sum ordinary-fill `closedPnl`; the four successful
+   fixtures contain no `USER_FILLS` rows, so expected `[0, 0, 0, 0]`.
+10. Replay fees: sum immutable replay-event fees exactly once; expected
+    `[0, 0, 1, 0]`.
+11. Ordinary fees: sum ordinary-fill fees; expected `[0, 0, 0, 0]`.
+12. Current balance: use the recorded account-balance term; expected
+    `[9999, 9998, 9998, 9998]`.
+13. Expected current balance: independently evaluate `starting + replay
+    realized + ordinary realized - replay fees - ordinary fees - effective
+    funding + unrelated movement`, with unrelated movement fixed at `0`;
+    expected `[9999, 9998, 9998, 9998]`.
+14. Settled-USDC residual: current balance minus expected current balance;
+    expected `[0, 0, 0, 0]`.
+15. Final position flatness: every requested current position size in the four
+    successful fixtures is zero; expected `[true, true, true, true]` exactly.
+16. Relevant open-order count: use the complete requested open-order inventory;
+    expected `[0, 0, 0, 0]` exactly.
+17. Current unrealized PnL: clearinghouse account value minus recorded current
+    cash balance for the final-flat fixtures; expected `[0, 0, 0, 0]`.
+
 ## Out of scope
 
 Implementation under this preflight; network or provider calls; reading an
@@ -356,7 +400,7 @@ services; trading; position changes; promotion; merge; push.
   changed.
 - TypeScript build (`npm run build`): PASS.
 - Full test suite (`npm run test:run`): PASS, 17 files / 262 tests.
-- Milestone status remains `draft`.
+- Milestone completed offline implementation and review on 2026-09-14.
 - Unreviewed landings since the branch point: none before this draft-only
   bookkeeping commit; no product code landed.
 - Unverified scout numbers used as product premises: none. Test counts and
@@ -364,7 +408,17 @@ services; trading; position changes; promotion; merge; push.
 
 ## Next
 
-Run the authorized bounded offline implementation over the exact six allowed
-paths, full gates, Opus sterile review, independent numeric verification,
-archive, and close-out. Any needed store-key or funding-writer change is a new
-prerequisite and must stop this milestone rather than silently widen it.
+Await separate authorization for local promotion. The reviewed default-off
+provider endpoint remains non-running; deployment, provider access, account
+access, notifications, services, and trading remain outside this milestone.
+
+## Result
+
+Implemented the default-off, strictly read-only cash-ledger evidence endpoint
+over the exact six allowed paths. Build and full tests passed (18 files, 281
+tests); independent sterile review approved 9/9; fresh independent numeric
+verification passed all 17 registered zero/exact-tolerance checks with no
+divergence across 69 component comparisons. Audit archive:
+`/Users/dylan/kit_archives/hypaper/HYPAPER-CASH-F7-S1-ledger-evidence/20260914T194639Z`
+(manifest SHA-256
+`f746e60d640c654b67e8670dbe614ab5ed67c83cd939e239636eccfff289d575`).
