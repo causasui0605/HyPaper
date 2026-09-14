@@ -130,8 +130,12 @@ identity check and mark this prerequisite implemented.
   `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
 - All 49 source-owned copied paths were byte/mode identical; the sole derived
   installed path was the project gate configuration. No unexpected path was
-  created. `upgrade.sh --check` returned `RESULT=current` with only the
-  expected dirty-worktree warning before the install commit.
+  retained in the final tree. The canonical 50-path current-postimage
+  projection is 6,756 bytes with SHA-256
+  `f53303fc828ee55dfd2aa7739d4dc799f23edc8fe762cd5ae0bc8cf18749fa9b`;
+  final `.gitignore` SHA-256 is
+  `2ed82b40c8de302dc0aa720679f1f5b3855bc2a1436d4e1c971d6b63be567524`.
+  `upgrade.sh --check` returned `RESULT=current` on the clean installed tree.
 - Real-directory/tmp subtree and mode-0600 write/delete probe: PASS. Primary
   and fallback reviewer-wrapper self-tests, review-bundle self-test,
   audit-manifest self-test, and generic-capture tests (59) all PASS.
@@ -150,3 +154,14 @@ identity check and mark this prerequisite implemented.
 - The new `.codex` agents and hooks require a fresh Codex session before the
   installed custom-agent surface can be used. CASH-F7 remains draft and no
   product implementation or provider/runtime action occurred.
+- Pre-wrapup installed tip/tree:
+  `7a1acb18938112b752e75262150575a406bf0bae` /
+  `ee107a55b4c8683ecc737d75f68402d99b9109dd`; worktree was clean.
+- Unreviewed landings since the prior `wrapup:` anchor are the explicitly
+  authorized infrastructure/bookkeeping commits `1907385` (this prerequisite
+  plan), `70701dd` (canonical install), and `7a1acb1` (remove generated Python
+  caches and include the installer-owned `AGENTS.md`). They contain no CASH-F7
+  product implementation and are source/manifest attested rather than a
+  maintenance-review result.
+- Scout numbers: none. Test counts and byte/digest values are reproducibility
+  evidence, not research premises.
