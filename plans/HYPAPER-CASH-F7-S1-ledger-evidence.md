@@ -408,9 +408,10 @@ services; trading; position changes; promotion; merge; push.
 
 ## Next
 
-Await separate authorization for local promotion. The reviewed default-off
-provider endpoint remains non-running; deployment, provider access, account
-access, notifications, services, and trading remain outside this milestone.
+Use the promoted provider seam as the frozen dependency for the downstream
+tholos cash-source verifier. The default-off endpoint remains non-running;
+deployment, provider access, account access, notifications, services, and
+trading remain outside this milestone.
 
 ## Result
 
@@ -422,3 +423,12 @@ divergence across 69 component comparisons. Audit archive:
 `/Users/dylan/kit_archives/hypaper/HYPAPER-CASH-F7-S1-ledger-evidence/20260914T194639Z`
 (manifest SHA-256
 `f746e60d640c654b67e8670dbe614ab5ed67c83cd939e239636eccfff289d575`).
+The reviewed result was locally fast-forwarded to `yihao` on 2026-09-14 from
+`ecc83201c280cdf3035f250495a131b432211598` to
+`1cc3c044fde1cdb3d8d33c7e38cfa57d8c43ce31`; post-promotion build and full
+tests passed (18 files, 281 tests). No push or runtime action occurred.
+
+Wrapup audit: the plan-only readiness commit
+`767a94bdc9d8522d6bef88d95a189bf425239dca` is the only non-closeout tracked
+landing after the previous wrapup anchor; it contains no product code. There
+are no unaudited research-number landings.
