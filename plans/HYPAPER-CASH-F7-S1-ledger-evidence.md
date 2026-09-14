@@ -1,6 +1,6 @@
 # HYPAPER-CASH-F7-S1: settled-USDC and ORACLE-funding evidence
 
-- status: draft
+- status: ready
 - numeric: true
 - owner: HyPaper
 - date: 2026-09-14
@@ -364,8 +364,7 @@ services; trading; position changes; promotion; merge; push.
 
 ## Next
 
-Obtain separate human authority for `draft -> ready` and bounded offline
-implementation over the exact six candidate paths, full gates, sterile review,
-numeric verification, archive, and close-out. Any needed store-key or funding
-writer change is a new prerequisite and must stop this milestone rather than
-silently widen it.
+Run the authorized bounded offline implementation over the exact six allowed
+paths, full gates, Opus sterile review, independent numeric verification,
+archive, and close-out. Any needed store-key or funding-writer change is a new
+prerequisite and must stop this milestone rather than silently widen it.
