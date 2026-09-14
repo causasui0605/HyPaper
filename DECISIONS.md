@@ -1,0 +1,1 @@
+2026-09-14 | HYPAPER-CASH-F7-S1 | Freeze a default-off read-only canonical evidence receipt over existing immutable funding, replay, fill, account, position, and open-order sources; downstream owns first-write archival, and unexplained cash residual refuses | This supplies actual recorded ORACLE and settled-USDC evidence without introducing provider mutation or a balancing plug.
