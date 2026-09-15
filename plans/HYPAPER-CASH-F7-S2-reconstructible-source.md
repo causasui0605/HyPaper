@@ -68,15 +68,19 @@ therefore requires account-index/hash parity, owner validation, and membership
 checks against both global open and trigger sets. A missing/malformed global
 active member whose owner cannot be safely attributed refuses.
 
-The account projection is exactly
+The provider proposes revising the account projection to exactly
 `{wallet_fingerprint,currency,balance,created_at_ms,replay_batch_id}`. The
 stored account has `userId`, `balance`, and `createdAt`; raw `userId` is not
-published. Order projections retain every sanitized state field needed to
+published. The provider also proposes that order projections retain every
+sanitized state field needed to
 reconstruct their identity and lifecycle:
 `oid,coin,asset,side,qty,filled_qty,average_fill_px,limit_px,order_type,
 time_in_force,reduce_only,grouping,status,created_at_ms,updated_at_ms,
 cl_ord_id,trigger_px,tp_sl,is_market,open_set_member,trigger_set_member`.
 Optional values are explicit null, not omitted or synthesized.
+Both exact-key changes are protocol revisions to the consumer proposal, just
+like the position-row correction, and require explicit bilateral consumer
+acceptance before readiness.
 
 ## Exact public source adaptation
 
@@ -161,7 +165,8 @@ amount, the result is **REFUSE**. Tolerance remains exactly zero.
 
 ## Frozen synthetic numeric evidence
 
-These are synthetic contract fixtures, not observed market/account results.
+These are synthetic arithmetic projections, not complete V2 public-source or
+receipt fixtures and not observed market/account results.
 Independent numeric verification must parse the frozen bytes below and may
 not import production code or test expected values as its arithmetic oracle.
 
@@ -190,10 +195,20 @@ The exact numeric manifest is 1,283 canonical bytes, SHA-256
 {"checks":[{"expected":["2","-2"],"id":"original_charges","tolerance":"0"},{"expected":"3","id":"corrected_charge","tolerance":"0"},{"expected":"1","id":"correction_delta","tolerance":"0"},{"expected":"1","id":"effective_funding_charge","tolerance":"0"},{"expected":"3","id":"replay_realized_pnl","tolerance":"0"},{"expected":"1","id":"replay_fees","tolerance":"0"},{"expected":"10002","id":"replay_final_balance","tolerance":"0"},{"expected":"-2","id":"ordinary_realized_pnl","tolerance":"0"},{"expected":"-0.25","id":"ordinary_fees","tolerance":"0"},{"expected":"9999.25","id":"expected_current_balance","tolerance":"0"},{"expected":"0","id":"residual","tolerance":"0"},{"expected":["0","0"],"id":"fill_end_positions","tolerance":"0"},{"expected":"-0.123456789012345678901234567890123456789","id":"precision_funding_charge","tolerance":"0"}],"fixtures":{"precision":{"bytes":182,"domain_digest":"0b4baf43aef0d7404402d280f8b8ee7f77b8a459d6c26c8cb526340be2802215","sha256":"cde804f82d4cb5fcfe012195670c167655ae330535b2781239fdaa1b91e3cbdd"},"success":{"bytes":988,"domain_digest":"3ef8bb132bc81370fd6beca74173c3e5bda17ccdf8995dd66619993642f95c34","sha256":"40619a5aa4eb17b352decbb8b04d3133f4568bb6f84ccaae8c86f9d6f806d4e2"}},"schema_version":"HYPAPER_CASH_F7_S2_NUMERIC_MANIFEST_V1"}
 ```
 
-All 13 checks use tolerance `0`. The precision product must equal
+All 13 arithmetic checks use tolerance `0`. The precision product must equal
 `-0.123456789012345678901234567890123456789`. Any provider/global-context
 rounding, stored cash drift, fee-sign drift, changed bytes, or digest mismatch
 refuses.
+
+These seeds do **not** close the implementation-readiness fixture gate. A
+future preflight step must freeze at least one complete closed-schema V2 source
+inventory and outer receipt, including batch/fill/event/correction/order
+identities, canonical timestamps, full replay and order projections, source
+and collection member digests, collection and top manifests, stable-state and
+inventory digests, coverage watermark/finality, every before/after transition,
+and the outer receipt digest. It must also freeze hostile variants and a
+zero-tolerance expected manifest for every one of those byte/digest/transition
+checks. No such complete fixture bytes or expected digests are claimed here.
 
 ## Proposed implementation allowlist and acceptance
 
@@ -229,12 +244,18 @@ The only unmerged `ms/*` ref at inspection was
 already independently parked; the one-row terminal-LF manifest SHA-256 was
 `6534c1a3700b905a3dc4e9393ed9e979770ef7f24d49f45f4e8e3ef0d8578248`.
 
-There is no implementation blocker within the proposed six paths. There is a
-capability boundary: upstream publication preimages and pre-rounded Redis cash
-digits do not exist in current source state. S2 must disclaim the former and
-refuse any mismatch caused by the latter. Strategy-scoped cash allocation or
-reconstructible reset/deposit/withdrawal history would require a separate
-writer/storage prerequisite.
+Readiness remains blocked on two exact offline items: bilateral consumer
+acceptance of the corrected position semantics and proposed account/order key
+sets; and the complete closed-schema end-to-end fixture/digest manifest
+described above. This preflight deliberately stops instead of inventing those
+large bytes before the protocol key sets are jointly accepted.
+
+There is also a capability boundary: upstream publication preimages and
+pre-rounded Redis cash digits do not exist in current source state. S2 must
+disclaim the former and refuse any mismatch caused by the latter.
+Strategy-scoped cash allocation or reconstructible
+reset/deposit/withdrawal history would require a separate writer/storage
+prerequisite.
 
 Fresh offline baseline gates at the adoption base passed after an offline,
 ignored dependency install: `npm run build` PASS; `npm run test:run` PASS with
@@ -254,7 +275,8 @@ landings and no unaudited scout numbers in this preflight.
 
 ## Next
 
-Request separate `draft -> ready` and offline
-implementation/review/numeric/archive authority. Before implementation, repeat
-the exact dependency hashes and consumer-document digest check against the
-frozen adoption base.
+Obtain bilateral consumer ACCEPT/REVISE on the position/account/order source
+schema corrections, then freeze the complete byte-bound V2 success and hostile
+fixtures plus the full zero-tolerance digest/transition manifest. Repeat the
+dependency hashes and consumer-document digest check before any later readiness
+decision; do not request `draft -> ready` until those gates close.
