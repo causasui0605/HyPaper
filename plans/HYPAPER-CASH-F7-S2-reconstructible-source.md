@@ -216,17 +216,28 @@ The complete conditional V2 exemplar is now frozen in plan-owned fixture files:
 |---|---|---|
 | `plans/fixtures/hypaper_cash_f7_s2_success.json` | 21,993 / `ab648315f0d2c270b45a3483321f57d51bb695506c478049aa20e4eef689c1ec` | `edab1df36718f928aa470c367971e44c9b6038d22dd3af50a24ce10d6c401ad9` |
 | `plans/fixtures/hypaper_cash_f7_s2_hostile.json` | 458 / `06352158d6aa7b2deee491764f44b3469ed9f857ccb3b7dfe86fd3439f441e33` | `5fc4a7c85f7fb297031cac32e9c35963472f178e9196fd48a0ca7e4ecc46a30b` |
-| `plans/fixtures/hypaper_cash_f7_s2_expected.json` | 9,197 / `9e702bd0f7679960df42573e47a31f368e8dd651d49d8732c3fde04ae2cd3c19` | `ac0f2876475fba175af42504cd107bcdd1125ec64b3ebf3ba9a4918be26618b9` |
+| `plans/fixtures/hypaper_cash_f7_s2_expected.json` | 10,337 / `83797246fa1bae2c37bd186a5ce129fbd492bb171fdc4bcd5892c36b5150d712` | `40fec55bbee16b0f6e375695958bd700904636c15982fba0407b099f62457e40` |
 
 The success payload contains one complete strict replay result with two
 synthetic entry/reduction events, four ordinary fills in Redis newest-first
 order, two same-boundary funding events, one correction, the exact sanitized
 account, an empty final position inventory, four terminal orders, all source
 rows, member/collection/top manifests, stable-state/inventory/receipt digests,
-and final coverage. The expected manifest freezes 51 checks over identities,
-timestamp order, every replay/ordinary/funding/correction cash and quantity
+and final coverage. The expected manifest freezes 52 checks over identities,
+complete source-time and separate observation-clock inventories, every
+replay/ordinary/funding/correction cash and quantity
 transition, every source/member/manifest digest, finality/watermark, stable
 state, inventory and outer receipt. Decimal checks have tolerance zero.
+
+The time checks name every public source timestamp by exact field family and
+preserve its native row order. Coverage/observation timestamps are a separate
+mapping, not mixed into or mislabelled as source-row evidence.
+
+The earlier 988-byte arithmetic seed intentionally abstracts replay fees as
+`1`, producing `9999.25`. The complete schema fixture derives its two replay
+fees from price × size × rate (`0.5 + 0.515 = 1.015`) and therefore produces
+`9999.235`. They are separate synthetic fixtures with separate manifests, not
+two claims about one account or a tolerance-based discrepancy.
 
 The hostile manifest deterministically mutates
 `/source_inventory/ordinary_fills/rows/0/source/fee` from `-0.0625` to
@@ -237,7 +248,7 @@ or account data is represented.
 
 An independent standard-library verifier (ignored preflight evidence; no
 production import) re-canonicalized the three payloads, recomputed all V2
-digests and cash/quantity equations, and passed all 51 expected checks. A
+digests and cash/quantity equations, and passed all 52 expected checks. A
 separate schema-only probe confirmed that the nested replay payload and stored
 result match the pinned production Zod schemas; production arithmetic was not
 used as the expected-value oracle.
