@@ -78,9 +78,19 @@ reconstruct their identity and lifecycle:
 time_in_force,reduce_only,grouping,status,created_at_ms,updated_at_ms,
 cl_ord_id,trigger_px,tp_sl,is_market,open_set_member,trigger_set_member`.
 Optional values are explicit null, not omitted or synthesized.
-Both exact-key changes are protocol revisions to the consumer proposal, just
-like the position-row correction, and require explicit bilateral consumer
-acceptance before readiness.
+All three protocol corrections received bilateral technical acceptance during
+this preflight. The accepted order shape is a complete sanitized **current
+order-state projection**, not an invented historical lifecycle: required
+non-null `average_fill_px` comes from stored `avgPx` (zero is permitted only
+when actually stored); `order_type` is `limit|trigger`; `time_in_force` is
+`Gtc|Ioc|Alo`; `reduce_only`, memberships, and any present `is_market` are
+strict booleans; `grouping` is `na|normalTpsl|positionTpsl`. Only
+`cl_ord_id,trigger_px,tp_sl,is_market` may be null, and null means the stored
+optional field is absent. Missing required fields, empty optional strings, or
+silent `avgPx ?? 0` / `isMarket ?? false` repair refuses. Average fill price is
+state evidence only, never a fill, ORACLE, execution-reference, or cash oracle.
+`created_at_ms` is the stored nonnegative safe integer from `createdAt`; it is
+identity/source evidence and may not be refreshed to an observation clock.
 
 ## Exact public source adaptation
 
@@ -200,15 +210,37 @@ All 13 arithmetic checks use tolerance `0`. The precision product must equal
 rounding, stored cash drift, fee-sign drift, changed bytes, or digest mismatch
 refuses.
 
-These seeds do **not** close the implementation-readiness fixture gate. A
-future preflight step must freeze at least one complete closed-schema V2 source
-inventory and outer receipt, including batch/fill/event/correction/order
-identities, canonical timestamps, full replay and order projections, source
-and collection member digests, collection and top manifests, stable-state and
-inventory digests, coverage watermark/finality, every before/after transition,
-and the outer receipt digest. It must also freeze hostile variants and a
-zero-tolerance expected manifest for every one of those byte/digest/transition
-checks. No such complete fixture bytes or expected digests are claimed here.
+The complete conditional V2 exemplar is now frozen in plan-owned fixture files:
+
+| File | Canonical payload bytes / SHA-256 (without terminal LF) | Tracked-file SHA-256 (with terminal LF) |
+|---|---|---|
+| `plans/fixtures/hypaper_cash_f7_s2_success.json` | 21,993 / `ab648315f0d2c270b45a3483321f57d51bb695506c478049aa20e4eef689c1ec` | `edab1df36718f928aa470c367971e44c9b6038d22dd3af50a24ce10d6c401ad9` |
+| `plans/fixtures/hypaper_cash_f7_s2_hostile.json` | 458 / `06352158d6aa7b2deee491764f44b3469ed9f857ccb3b7dfe86fd3439f441e33` | `5fc4a7c85f7fb297031cac32e9c35963472f178e9196fd48a0ca7e4ecc46a30b` |
+| `plans/fixtures/hypaper_cash_f7_s2_expected.json` | 9,197 / `9e702bd0f7679960df42573e47a31f368e8dd651d49d8732c3fde04ae2cd3c19` | `ac0f2876475fba175af42504cd107bcdd1125ec64b3ebf3ba9a4918be26618b9` |
+
+The success payload contains one complete strict replay result with two
+synthetic entry/reduction events, four ordinary fills in Redis newest-first
+order, two same-boundary funding events, one correction, the exact sanitized
+account, an empty final position inventory, four terminal orders, all source
+rows, member/collection/top manifests, stable-state/inventory/receipt digests,
+and final coverage. The expected manifest freezes 51 checks over identities,
+timestamp order, every replay/ordinary/funding/correction cash and quantity
+transition, every source/member/manifest digest, finality/watermark, stable
+state, inventory and outer receipt. Decimal checks have tolerance zero.
+
+The hostile manifest deterministically mutates
+`/source_inventory/ordinary_fills/rows/0/source/fee` from `-0.0625` to
+`-0.0624` without updating its source/member/outer digests and requires a
+redacted `source_preimage` refusal with no receipt. Further hostile cases may
+be expressed as exact mutations of this base during implementation; no market
+or account data is represented.
+
+An independent standard-library verifier (ignored preflight evidence; no
+production import) re-canonicalized the three payloads, recomputed all V2
+digests and cash/quantity equations, and passed all 51 expected checks. A
+separate schema-only probe confirmed that the nested replay payload and stored
+result match the pinned production Zod schemas; production arithmetic was not
+used as the expected-value oracle.
 
 ## Proposed implementation allowlist and acceptance
 
@@ -221,7 +253,8 @@ Exactly six product/test paths, unchanged from S1:
 - `src/__tests__/cash-ledger-evidence.test.ts`
 - `src/__tests__/route-validation.test.ts`
 
-Plan and append-only decision bookkeeping are the only preflight paths.
+Plan, the three `plans/fixtures/hypaper_cash_f7_s2_*.json` design fixtures,
+and append-only decision bookkeeping are the only preflight paths.
 Writers, store keys, replay/funding/order/position engines and existing V1
 semantics are read-only dependencies.
 
@@ -244,11 +277,11 @@ The only unmerged `ms/*` ref at inspection was
 already independently parked; the one-row terminal-LF manifest SHA-256 was
 `6534c1a3700b905a3dc4e9393ed9e979770ef7f24d49f45f4e8e3ef0d8578248`.
 
-Readiness remains blocked on two exact offline items: bilateral consumer
-acceptance of the corrected position semantics and proposed account/order key
-sets; and the complete closed-schema end-to-end fixture/digest manifest
-described above. This preflight deliberately stops instead of inventing those
-large bytes before the protocol key sets are jointly accepted.
+The two prior offline readiness gaps are closed at candidate level: bilateral
+consumer acceptance covers the position/account/order corrections, and the
+complete fixture/digest manifest above is frozen. Before readiness, the owner
+must still perform a fresh same-tree digest/ref/isolation/baseline
+revalidation; that is a workflow gate, not an unresolved schema decision.
 
 There is also a capability boundary: upstream publication preimages and
 pre-rounded Redis cash digits do not exist in current source state. S2 must
@@ -260,6 +293,9 @@ prerequisite.
 Fresh offline baseline gates at the adoption base passed after an offline,
 ignored dependency install: `npm run build` PASS; `npm run test:run` PASS with
 18 files and 281 tests. No product or test byte changed.
+
+The same configured baseline gates were repeated after the three plan-owned
+fixture files were generated: build PASS and 18 files / 281 tests PASS.
 
 Draft freeze commit: `d6bc865da5775baffe9596adac37dbdc7abd1f21`,
 tree `522e9d9e485463a09426d10b1069df99afa3b81c`. The plan SHA-256 at that
@@ -275,8 +311,7 @@ landings and no unaudited scout numbers in this preflight.
 
 ## Next
 
-Obtain bilateral consumer ACCEPT/REVISE on the position/account/order source
-schema corrections, then freeze the complete byte-bound V2 success and hostile
-fixtures plus the full zero-tolerance digest/transition manifest. Repeat the
-dependency hashes and consumer-document digest check before any later readiness
-decision; do not request `draft -> ready` until those gates close.
+Return the exact candidate/fixture digests for consumer-side byte verification.
+Then, under separate authority, perform fresh same-tree
+digest/ref/isolation/baseline revalidation before any `draft -> ready`
+decision and implementation pipeline.
