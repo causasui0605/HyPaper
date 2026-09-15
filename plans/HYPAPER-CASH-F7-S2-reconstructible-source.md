@@ -317,6 +317,17 @@ Complete conditional fixture freeze commit:
 `0d1db7004054d70b7c14b54d3bcebe049d9f118b`; plan SHA-256 at that freeze
 was `78455b5b94544cdc0b24fc3f0a891eda9219d457e183d26da1c46385947a4fbd`.
 
+The consumer's sole fixture correction was resolved at
+`64a1a037757754792d2cc93aceaaa6bf40ccb168`, tree
+`900c13a4acf3ac9e05123c59664d4f03c489ad86`. It independently extracted and
+matched all 24 named source/coverage timestamp arrays, all 52 checks, the
+10,337-byte expected payload, SHA-256
+`83797246fa1bae2c37bd186a5ce129fbd492bb171fdc4bcd5892c36b5150d712`,
+and LF-file SHA-256
+`40fec55bbee16b0f6e375695958bd700904636c15982fba0407b099f62457e40`.
+The success and hostile fixture bytes were unchanged. This is bilateral
+design-byte acceptance only, not implementation or sterile review.
+
 UNREVIEWED LANDINGS: none. New commits contain only this draft plan, three
 plan-owned synthetic fixture files, and the append-only decision entry, with no
 product/test landing. SCOUT NUMBERS: none; all numeric values are explicitly
@@ -328,7 +339,6 @@ landings and no unaudited scout numbers in this preflight.
 
 ## Next
 
-Return the exact candidate/fixture digests for consumer-side byte verification.
-Then, under separate authority, perform fresh same-tree
+Under separate authority, perform fresh same-tree
 digest/ref/isolation/baseline revalidation before any `draft -> ready`
 decision and implementation pipeline.
