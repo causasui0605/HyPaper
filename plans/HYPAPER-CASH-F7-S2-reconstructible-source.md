@@ -257,6 +257,62 @@ used as the expected-value oracle.
 
 ## Frozen allowed_paths and acceptance criteria
 
+### Registered implementation contract
+
+Deliverable: add a distinct, default-off, strictly read-only
+`getCashLedgerEvidenceV2` route and strict
+`HYPAPER_CASH_LEDGER_EVIDENCE_V2` public receipt that exposes enough complete
+whole-account, single-replay-epoch source inventory for an independent
+consumer to reconstruct settled USDC, recorded ORACLE funding, order/fill
+identity, and final flatness. Preserve V1 byte-for-byte and behavior-for-
+behavior. Implement only the six allowed paths below.
+
+Acceptance criteria:
+
+1. Add closed, canonical V2 request/receipt/error/source schemas and codecs,
+   separate V2 digest domains, strict duplicate/unknown/missing-key rejection,
+   canonical Decimal strings, safe native integers, explicit nullability, and
+   no V1/V2 fallback. V2 is disabled by default and branches before account
+   creation; disabled or invalid requests perform no store read.
+2. Publish one complete whole-account/current-replay-epoch source inventory:
+   strict sanitized replay result, all ordinary fills in Redis newest-first
+   order, exact funding/correction raw JSON, sanitized account including stored
+   `created_at_ms`, empty successful final positions, and all sanitized current
+   order-state rows with the accepted required/nullable fields. Do not filter
+   by strategy/date or invent missing identities/source/preimages.
+3. Capture raw source and index/key/global-active inventories twice, require
+   byte/economic stability, full position/order owner and membership parity,
+   row and byte caps before unbounded fanout, and fail closed on unknown-owner
+   orphan, torn read, malformed zero position row, nonflat/open state, gap,
+   reset/manual/unrelated cash, absent provenance, or any nonzero residual.
+4. Make every V2 source/member/collection/top/stable-state/inventory/receipt
+   digest independently reconstructible from published bytes. Preserve funding
+   and correction raw SHA-256; never relabel a private V1 hash. Preserve
+   declared upstream identifiers without claiming unavailable publication-time
+   preimages.
+5. Recompute replay and ordinary realized PnL/fees, signed effective funding
+   with corrections, every cash before/after transition, reverse-source-order
+   signed fill quantity, terminal orders and empty final positions. Use
+   input-sized Decimal precision; signed fees include rebates. Stored
+   `HINCRBYFLOAT` text is evidence, not an oracle: any exact rederivation drift
+   refuses at tolerance zero.
+6. Match the three immutable tracked review fixtures exactly. The success
+   fixture is a complete 21,993-byte canonical receipt; the hostile fee
+   mutation refuses with no receipt; the 10,337-byte expected manifest's 52
+   identity/time/transition/digest checks pass at exact tolerance zero. Do not
+   modify fixture bytes during implementation.
+7. Add hostile tests for canonical form, source/member/manifest tampering,
+   identity/owner/index parity, optional-field drift, chronology/finality,
+   source and byte caps, torn reads, flatness, signed rebate, long precision,
+   V1 isolation, no-mutation/default-off behavior, and redacted typed errors.
+8. Pass `npm run build` and `npm run test:run`, obtain sterile Opus approval,
+   and pass independent numeric verification against actual reviewed outputs.
+
+Out of scope: writers, store keys, replay/funding/order/position engines,
+account/store migrations, new dependencies, network/upstream/account access,
+service/runtime/store mutation, notification, trading, strategy allocation,
+cash-reset ledger invention, promotion, merge, and push.
+
 Exactly six product/test paths, unchanged from S1:
 
 - `src/types/cash-ledger-evidence.ts`
