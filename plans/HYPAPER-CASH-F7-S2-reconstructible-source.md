@@ -423,3 +423,25 @@ landings and no unaudited scout numbers in this preflight.
 Await separate human authorization for local promotion and any consumer-side
 adoption. Runtime, network, account/store access, service activation, trading,
 merge and push remain unauthorized.
+
+## Close-out evidence
+
+Reviewed close-out commit `9ea830e9617017e86a178efcd125ffec10394b3f`,
+tree `91624618ac0eb286d022933dc228dc506e881c80`, preserves the approved
+six-path patch SHA-256
+`1e7eba726cc6b656f9b4c7347016000046eaceb683ad24fc6e564a1f04c669f0`.
+Configured gates passed with 18 test files and 296 tests. The valid Opus
+sterile verdict was `approve` with no blockers; independent numeric
+verification passed 65/65 checks at zero tolerance and bound actual reviewed
+engine output byte-for-byte to the 21,993-byte success fixture.
+
+Run archive:
+`/Users/dylan/kit_archives/hypaper/HYPAPER-CASH-F7-S2/20260915T135224Z`;
+archive manifest SHA-256
+`7210826c427215cfd4b222179a154c47d91d57c9429e146871a42299403c19f8`.
+
+Wrapup audit: no unreviewed product landings remain since the prior wrapup;
+the readiness and contract commits are plan-only bookkeeping, and the sole
+product/test landing is the `[implemented+reviewed]` close-out above. No scout
+numbers remain: all durable numeric values are synthetic byte-bound fixtures
+and were independently verified by this numeric milestone gate.
