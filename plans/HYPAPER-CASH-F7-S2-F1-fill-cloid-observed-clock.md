@@ -16,6 +16,11 @@
 - promotion base: `9bfcec3cb2eea86101f91987d97196233c20d53a`
 - promotion content tip: `4c67afb516e195e303c50cb104388688ba0de9a3`
 - post-promotion gates: `npm run build` PASS; `npm run test:run` PASS (18 files, 299 tests)
+- consumer interface revalidation: ACCEPT against provider content HEAD
+  `0ca3d286c3473e981105e02971365638343ecffb`, tree
+  `56c66476cc82ffc2e3ae89584568f1a11b8572aa`; cloid omission/presence/refusal,
+  digest propagation, post-stability observation sampling, no later store read,
+  and the three S2 account/position/order corrections matched independently
 - result: exact three-path patch `2eda73f28f19b685b83994000037c254a37ef313e5e46850720e38f447320155`; build and 299-test gate PASS; Opus sterile Cycle 1 approve (7/8, no blockers); independent numeric PASS (9/9 named checks including all original 52 comparisons)
 - archive: `/Users/dylan/kit_archives/hypaper/HYPAPER-CASH-F7-S2-F1/20260915T151743Z`; manifest SHA-256 `ce1e09ee72e33a367f5faa35fd28927762236fd18b70a66320c12cbe16f18547`
 
@@ -114,8 +119,10 @@ production/test expected values as the arithmetic or digest oracle.
 
 ## Next
 
-Provide the stable promoted provider postimages to the independent consumer
-interface verifier. Consumer implementation/readiness remains separately gated.
+Consumer remains draft. Its next permitted step requires separate human
+authorization for a fresh offline preflight that adopts this interface, binds
+the exact provider postimages, and freezes consumer fixtures and expected
+values. No consumer implementation or runtime authority follows from ACCEPT.
 
 Promotion state: the exact reviewed result was fast-forwarded to the clean local
 `yihao` target and passed its combined gates. No runtime, network, service,
