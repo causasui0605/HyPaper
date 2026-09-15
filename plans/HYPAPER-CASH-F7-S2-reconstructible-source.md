@@ -1,6 +1,6 @@
 # HYPAPER-CASH-F7-S2: reconstructible public cash source
 
-- status: ready
+- status: implemented
 - numeric: true
 - owner: HyPaper
 - date: 2026-09-15
@@ -8,6 +8,11 @@
 - provider source tree: `d777a4866e3afa0dc1cdab32441d28437c5a55e8`
 - implementation adoption base: `d6fbd82a6ef985529f6944ba69362918a22dc555`
 - implementation adoption tree: `3b2f2374041799ad65727cc5b9e6a3c1df89fb18`
+- implemented: 2026-09-15
+- result: strict default-off V2 public source inventory implemented on the six
+  frozen paths; full build and 296-test gate passed, Opus sterile review
+  approved, and independent numeric verification passed 65/65 at zero
+  tolerance against actual reviewed output.
 
 This ready milestone is authorized only for offline implementation, configured
 gates, Opus sterile review, independent numeric verification, archive and
@@ -415,7 +420,6 @@ landings and no unaudited scout numbers in this preflight.
 
 ## Next
 
-Run the registered offline implementer on exactly the six allowed paths,
-followed by configured full gates, sterile Opus review, independent numeric
-verification against actual reviewed outputs, archive and close-out. Stop
-before any promotion or runtime action.
+Await separate human authorization for local promotion and any consumer-side
+adoption. Runtime, network, account/store access, service activation, trading,
+merge and push remain unauthorized.

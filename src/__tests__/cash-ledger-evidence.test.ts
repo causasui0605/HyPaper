@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import DecimalModule from 'decimal.js';
 import { describe, expect, it, vi } from 'vitest';
 import { RedisMock } from './helpers/redis-mock.js';
 import { KEYS } from '../store/keys.js';
@@ -8,13 +10,20 @@ import {
   cashLedgerEvidenceManifestDigest,
   CashLedgerEvidenceError,
   getCashLedgerEvidence,
+  CashLedgerEvidenceV2Error,
+  getCashLedgerEvidenceV2,
 } from '../engine/cash-ledger-evidence.js';
 import {
   CASH_LEDGER_EVIDENCE_SCHEMA,
+  CASH_LEDGER_EVIDENCE_V2_SCHEMA,
   canonicalJson,
   decodeCashLedgerEvidenceReceipt,
+  decodeCashLedgerEvidenceV2Receipt,
+  decodeCashLedgerEvidenceV2Request,
   domainDigest,
   encodeCashLedgerEvidenceReceipt,
+  encodeCashLedgerEvidenceV2Receipt,
+  CashLedgerEvidenceV2CodecError,
   walletFingerprint,
   type CashLedgerEvidenceReceipt,
 } from '../types/cash-ledger-evidence.js';
@@ -553,5 +562,500 @@ describe('cash ledger evidence derivation', () => {
       type: 'getCashLedgerEvidence', user: USER, dex: 'xyz', coins: [COIN],
       coverageStartMs: FUNDING_TIME, coverageEndMs: FUNDING_TIME, finalFlatRequired: true,
     }, evidenceDependencies(redis))).rejects.toMatchObject({ code: 'provisional_incomplete' });
+  });
+});
+
+type V2Fixture = {
+  schema_version: string;
+  provider_identity: {
+    source_revision: string;
+    image_digest: string;
+    compose_config_digest: string;
+    api_schema_version: typeof CASH_LEDGER_EVIDENCE_V2_SCHEMA;
+    funding_interval_ms: number;
+    correction_finality_ms: number;
+    max_evidence_rows: number;
+  };
+  subject: {
+    wallet_fingerprint: string;
+    dex: string;
+    coins: string[];
+    scope: 'whole_account_replay_epoch';
+    replay_batch_id: string;
+  };
+  coverage: { start_ms: number; end_ms: number; observed_at_ms: number };
+  source_inventory: any;
+};
+
+function readV2Fixture(): V2Fixture {
+  return JSON.parse(readFileSync('plans/fixtures/hypaper_cash_f7_s2_success.json', 'utf8')) as V2Fixture;
+}
+
+async function seedV2Fixture(redis: RedisMock): Promise<{
+  fixture: V2Fixture;
+  user: string;
+  request: Record<string, unknown>;
+  dependencies: any;
+}> {
+  const fixture = readV2Fixture();
+  const inventory = fixture.source_inventory;
+  const user = `0x${'1'.repeat(40)}`;
+  const account = inventory.account.rows[0].source as Record<string, any>;
+  await redis.hset(
+    KEYS.USER_ACCOUNT(user),
+    'userId', user,
+    'balance', account.balance,
+    'createdAt', String(account.created_at_ms),
+  );
+  const replay = { ...inventory.replay.rows[0].source } as Record<string, any>;
+  replay.user = user;
+  delete replay.wallet_fingerprint;
+  await redis.set(KEYS.HISTORICAL_REPLAY_INDEX(user), replay.batchId);
+  await redis.set(KEYS.HISTORICAL_REPLAY_BATCH(user, replay.batchId), JSON.stringify(replay));
+
+  for (const row of [...inventory.ordinary_fills.rows].reverse()) {
+    await redis.lpush(KEYS.USER_FILLS(user), JSON.stringify(row.source));
+  }
+  for (const row of inventory.funding_records.rows) {
+    await redis.set(KEYS.PNL_FUNDING_EVENT(user, row.identity), row.source.raw_json);
+    await redis.rpush(KEYS.PNL_FUNDING_EVENTS(user), row.identity);
+  }
+  for (const row of inventory.correction_records.rows) {
+    await redis.set(KEYS.PNL_FUNDING_CORRECTION(user, row.identity), row.source.raw_json);
+    await redis.rpush(KEYS.PNL_FUNDING_CORRECTIONS(user), row.identity);
+  }
+  for (const row of inventory.orders.rows) {
+    const source = row.source as Record<string, any>;
+    const data: Record<string, string> = {
+      oid: String(source.oid), userId: user, asset: String(source.asset), coin: source.coin,
+      isBuy: String(source.side === 'BUY'), sz: source.qty, limitPx: source.limit_px,
+      orderType: source.order_type, tif: source.time_in_force, reduceOnly: String(source.reduce_only),
+      grouping: source.grouping, status: source.status, filledSz: source.filled_qty,
+      avgPx: source.average_fill_px, createdAt: String(source.created_at_ms),
+      updatedAt: String(source.updated_at_ms),
+    };
+    if (source.cl_ord_id !== null) data.cloid = source.cl_ord_id;
+    if (source.trigger_px !== null) data.triggerPx = source.trigger_px;
+    if (source.tp_sl !== null) data.tpsl = source.tp_sl;
+    if (source.is_market !== null) data.isMarket = String(source.is_market);
+    const args: string[] = [];
+    for (const [key, value] of Object.entries(data)) args.push(key, value);
+    await redis.hset(KEYS.ORDER(source.oid), ...args);
+    await redis.zadd(KEYS.USER_ORDERS(user), source.created_at_ms, String(source.oid));
+  }
+
+  const state = {
+    assetPositions: [],
+    crossMarginSummary: { accountValue: account.balance },
+    marginSummary: { accountValue: account.balance },
+    time: 2,
+  };
+  const dependencies = {
+    redis,
+    historicalReplay: vi.fn(async () => replay),
+    clearinghouseState: vi.fn(async () => state),
+    openOrders: vi.fn(async () => [] as unknown[]),
+    now: vi.fn(() => fixture.coverage.observed_at_ms),
+    providerIdentity: fixture.provider_identity,
+    maxBytes: 100_000,
+  };
+  const request = {
+    type: 'getCashLedgerEvidenceV2', user, dex: fixture.subject.dex,
+    coins: fixture.subject.coins, coverageStartMs: fixture.coverage.start_ms,
+    coverageEndMs: fixture.coverage.end_ms, finalFlatRequired: true,
+    scope: fixture.subject.scope, expectedReplayBatchId: fixture.subject.replay_batch_id,
+  };
+  return { fixture, user, request, dependencies };
+}
+
+describe('cash ledger evidence V2 reconstructible source', () => {
+  it('round-trips the immutable success fixture byte-for-byte', () => {
+    const bytes = readFileSync('plans/fixtures/hypaper_cash_f7_s2_success.json');
+    const payload = bytes.subarray(0, -1);
+    const receipt = decodeCashLedgerEvidenceV2Receipt(payload);
+    expect(Buffer.from(encodeCashLedgerEvidenceV2Receipt(receipt))).toEqual(Buffer.from(payload));
+    expect(receipt.schema_version).toBe(CASH_LEDGER_EVIDENCE_V2_SCHEMA);
+  });
+
+  it('reconstructs the complete fixture-shaped account without mutation', async () => {
+    const redis = new RedisMock();
+    const { fixture, request, dependencies } = await seedV2Fixture(redis);
+    const writes = [
+      vi.spyOn(redis, 'set'), vi.spyOn(redis, 'hset'), vi.spyOn(redis, 'rpush'),
+      vi.spyOn(redis, 'lpush'), vi.spyOn(redis, 'del'), vi.spyOn(redis, 'sadd'),
+      vi.spyOn(redis, 'srem'), vi.spyOn(redis, 'zadd'),
+    ];
+    const receipt = await getCashLedgerEvidenceV2(request, dependencies);
+    const expected = readFileSync('plans/fixtures/hypaper_cash_f7_s2_success.json').subarray(0, -1);
+    expect(Buffer.from(encodeCashLedgerEvidenceV2Receipt(receipt))).toEqual(Buffer.from(expected));
+    expect(receipt.settled_usdc.ordinary_fees).toBe('-0.25');
+    expect(receipt.source_inventory.positions.rows).toEqual([]);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
+    expect(fixture.subject.replay_batch_id).toBe(receipt.subject.replay_batch_id);
+  });
+
+  it('verifies every exact zero-tolerance check in the expected manifest', async () => {
+    const Decimal = DecimalModule.default ?? DecimalModule;
+    const text = (value: string): string => new Decimal(value).toFixed();
+    const redis = new RedisMock();
+    const { request, dependencies } = await seedV2Fixture(redis);
+    const receipt = await getCashLedgerEvidenceV2(request, dependencies);
+    const expected = JSON.parse(readFileSync('plans/fixtures/hypaper_cash_f7_s2_expected.json', 'utf8')) as {
+      checks: Array<{ id: string; expected: unknown; tolerance?: string }>;
+      fixture: { bytes: number; sha256: string };
+    };
+    const payload = encodeCashLedgerEvidenceV2Receipt(receipt);
+    expect(payload.byteLength).toBe(expected.fixture.bytes);
+    expect(createHash('sha256').update(payload).digest('hex')).toBe(expected.fixture.sha256);
+
+    const replay = receipt.source_inventory.replay.rows[0]!.source;
+    const fills = receipt.source_inventory.ordinary_fills.rows;
+    const funding = receipt.funding_events;
+    const corrections = receipt.funding_corrections;
+    const account = receipt.source_inventory.account.rows[0]!.source;
+    const orders = receipt.source_inventory.orders.rows;
+    const replayEvents = replay.events;
+    const replayPayload = replay.replay;
+    const cashTransitions = (starting: string, events: readonly { closedPnl: string; fee: string }[]): string[][] => {
+      let balance = starting;
+      return events.map((event) => {
+        const before = balance;
+        balance = text(new Decimal(balance).plus(event.closedPnl).minus(event.fee).toFixed());
+        return [before, balance];
+      });
+    };
+    const quantityTransitions = new Map<string, string[][]>();
+    for (const fill of [...fills].reverse()) {
+      const transitions = quantityTransitions.get(fill.source.coin) ?? [];
+      transitions.push([fill.source.startPosition, text(new Decimal(fill.source.startPosition).plus(
+        fill.source.side === 'B' ? fill.source.sz : `-${fill.source.sz}`,
+      ).toFixed())]);
+      quantityTransitions.set(fill.source.coin, transitions);
+    }
+    const rawFunding = receipt.source_inventory.funding_records.rows.map((row) => JSON.parse(row.source.raw_json) as Record<string, unknown>);
+    const rawCorrections = receipt.source_inventory.correction_records.rows.map((row) => JSON.parse(row.source.raw_json) as Record<string, unknown>);
+    const externalCashTransitions = [
+      ...funding.map((event, index) => ({
+        time: rawFunding[index]!.appliedAt as number,
+        before: event.account_balance_before,
+        after: event.account_balance_after,
+      })),
+      ...corrections.map((correction, index) => ({
+        time: rawCorrections[index]!.appliedAt as number,
+        before: correction.account_balance_before,
+        after: correction.account_balance_after,
+      })),
+    ].sort((left, right) => left.time - right.time);
+    let ordinaryBalance = replay.finalBalance;
+    let externalIndex = 0;
+    const ordinaryCashTransitions: string[][] = [];
+    for (const fill of [...fills].reverse()) {
+      while (externalIndex < externalCashTransitions.length
+        && externalCashTransitions[externalIndex]!.time < fill.source.time) {
+        const transition = externalCashTransitions[externalIndex]!;
+        expect(ordinaryBalance).toBe(transition.before);
+        ordinaryBalance = transition.after;
+        externalIndex += 1;
+      }
+      const before = ordinaryBalance;
+      ordinaryBalance = text(new Decimal(ordinaryBalance).plus(fill.source.closedPnl).minus(fill.source.fee).toFixed());
+      ordinaryCashTransitions.push([before, ordinaryBalance]);
+    }
+    const timestampInventory = {
+      'account.created_at_ms': [account.created_at_ms],
+      'correction_records.raw_json.appliedAt': rawCorrections.map((row) => row.appliedAt),
+      'correction_records.raw_json.fundingTime': rawCorrections.map((row) => row.fundingTime),
+      'funding_records.raw_json.appliedAt': rawFunding.map((row) => row.appliedAt),
+      'funding_records.raw_json.fundingTime': rawFunding.map((row) => row.fundingTime),
+      'orders.created_at_ms': orders.map((row) => Number(row.source.created_at_ms)),
+      'orders.updated_at_ms': orders.map((row) => Number(row.source.updated_at_ms)),
+      'ordinary_fills.time': fills.map((row) => row.source.time),
+      'replay.events.effectiveAt': replayPayload.events.map((row) => row.effectiveAt),
+      'replay.priceEvidence.effectiveAt': replayPayload.priceEvidence.map((row) => row.effectiveAt),
+      'replay.priceEvidence.requestAt': replayPayload.priceEvidence.map((row) => row.requestAt),
+      'replay.priceEvidence.responseAt': replayPayload.priceEvidence.map((row) => row.responseAt),
+      'replay.riskMarkEvidence.requestAt': replayPayload.riskMarkEvidence.map((row) => row.requestAt),
+      'replay.riskMarkEvidence.responseAt': replayPayload.riskMarkEvidence.map((row) => row.responseAt),
+      'replay.source.generatedAt': [replayPayload.source.generatedAt],
+      'replay_result.events.effectiveAt': replayEvents.map((row) => row.effectiveAt),
+      'replay_result.events.recordedAt': replayEvents.map((row) => row.recordedAt),
+      'replay_result.events.replayedAt': replayEvents.map((row) => row.replayedAt),
+      'replay_result.replayedAt': [replay.replayedAt],
+    };
+    const actual = new Map<string, unknown>([
+      ['replay_realized_pnl', receipt.settled_usdc.replay_realized_pnl],
+      ['replay_fees', receipt.settled_usdc.replay_fees],
+      ['replay_final_balance', receipt.settled_usdc.replay_final_balance],
+      ['ordinary_realized_pnl', receipt.settled_usdc.ordinary_realized_pnl],
+      ['ordinary_fees', receipt.settled_usdc.ordinary_fees],
+      ['original_funding_charges', funding.map((event) => event.funding_charge)],
+      ['corrected_funding_charge', corrections.map((correction) => correction.corrected_funding_charge)[0]],
+      ['correction_delta', corrections.map((correction) => correction.funding_charge_delta)[0]],
+      ['effective_funding_charge', receipt.settled_usdc.effective_funding_charge],
+      ['expected_current_balance', receipt.settled_usdc.expected_current_balance],
+      ['residual', receipt.settled_usdc.residual],
+      ['quantity_final_CL', quantityTransitions.get('xyz:CL')?.at(-1)?.[1]],
+      ['quantity_final_NATGAS', quantityTransitions.get('xyz:NATGAS')?.at(-1)?.[1]],
+      ['quantity_transitions_CL', quantityTransitions.get('xyz:CL')],
+      ['quantity_transitions_NATGAS', quantityTransitions.get('xyz:NATGAS')],
+      ['replay_cash_transitions', cashTransitions(replay.startingBalance, replayEvents)],
+      ['ordinary_cash_transitions', ordinaryCashTransitions],
+      ['funding_cash_transitions', funding.map((event) => [event.account_balance_before, event.account_balance_after])],
+      ['correction_cash_transitions', corrections.map((correction) => [correction.account_balance_before, correction.account_balance_after])],
+      ['funding_cumulative_transitions', funding.map((event) => [event.cum_funding_before, event.cum_funding_after])],
+      ['correction_cumulative_transitions', corrections.map((correction) => [correction.cum_funding_before, correction.cum_funding_after])],
+      ['coverage_watermark_ms', receipt.coverage.correction_finality_watermark_ms],
+      ['latest_fully_covered_funding_time_ms', receipt.coverage.latest_fully_covered_funding_time_ms],
+      ['source_timestamp_inventory', timestampInventory],
+      ['observation_and_coverage_clock_inventory', {
+        'coverage.correction_finality_watermark_ms': [receipt.coverage.correction_finality_watermark_ms],
+        'coverage.end_ms': [receipt.coverage.end_ms],
+        'coverage.latest_fully_covered_funding_time_ms': [receipt.coverage.latest_fully_covered_funding_time_ms],
+        'coverage.observed_at_ms': [receipt.coverage.observed_at_ms],
+        'coverage.start_ms': [receipt.coverage.start_ms],
+      }],
+      ['replay_batch_id', receipt.subject.replay_batch_id],
+      ['replay_event_ids', replay.eventIds],
+      ['ordinary_fill_ids', fills.map((row) => row.identity)],
+      ['positions_empty', receipt.source_inventory.positions.rows.map((row) => row.source)],
+      ['orders_terminal', orders.map((row) => row.source.status)],
+      ['source_digest_replay', receipt.source_inventory.replay.rows.map((row) => row.source_digest)],
+      ['source_digest_fills', fills.map((row) => row.source_digest)],
+      ['source_digest_funding', receipt.source_inventory.funding_records.rows.map((row) => row.source_digest)],
+      ['source_digest_corrections', receipt.source_inventory.correction_records.rows.map((row) => row.source_digest)],
+      ['source_digest_account', receipt.source_inventory.account.rows.map((row) => row.source_digest)],
+      ['source_digest_positions', receipt.source_inventory.positions.rows.map((row) => row.source_digest)],
+      ['source_digest_orders', orders.map((row) => row.source_digest)],
+      ['funding_member_digests', funding.map((event) => event.member_sha256)],
+      ['correction_member_digests', corrections.map((correction) => correction.member_sha256)],
+      ['manifest_replay', receipt.source_inventory.replay.manifest.manifest_digest],
+      ['manifest_ordinary_fills', receipt.source_inventory.ordinary_fills.manifest.manifest_digest],
+      ['manifest_funding_records', receipt.source_inventory.funding_records.manifest.manifest_digest],
+      ['manifest_correction_records', receipt.source_inventory.correction_records.manifest.manifest_digest],
+      ['manifest_account', receipt.source_inventory.account.manifest.manifest_digest],
+      ['manifest_positions', receipt.source_inventory.positions.manifest.manifest_digest],
+      ['manifest_orders', receipt.source_inventory.orders.manifest.manifest_digest],
+      ['inventory_manifest', receipt.source_inventory.manifest.manifest_digest],
+      ['inventory_digest', receipt.source_inventory.inventory_digest],
+      ['stable_state_digest', receipt.flatness.clearinghouse_state_sha256],
+      ['event_manifest', receipt.event_manifest.manifest_digest],
+      ['correction_manifest', receipt.correction_manifest.manifest_digest],
+      ['receipt_digest', receipt.receipt_digest],
+    ]);
+    expect(expected.checks).toHaveLength(52);
+    for (const check of expected.checks) {
+      expect(check.tolerance ?? '0').toBe('0');
+      expect(actual.has(check.id)).toBe(true);
+      expect(canonicalJson(actual.get(check.id))).toBe(canonicalJson(check.expected));
+    }
+  });
+
+  it('continues ordinary reconstruction from a non-flat replay final position', async () => {
+    const redis = new RedisMock();
+    const seeded = await seedV2Fixture(redis);
+    const replayKey = KEYS.HISTORICAL_REPLAY_BATCH(seeded.user, seeded.request.expectedReplayBatchId as string);
+    const replay = JSON.parse((await redis.get(replayKey))!) as Record<string, any>;
+    replay.events = [replay.events[0]];
+    replay.eventCount = 1;
+    replay.eventIds = [replay.eventIds[0]];
+    replay.replay.events = [replay.replay.events[0]];
+    replay.replay.priceEvidence = [replay.replay.priceEvidence[0]];
+    replay.finalBalance = '9999.5';
+    replay.positions = [{ asset: 110029, coin: 'xyz:CL', szi: '1', entryPx: '100' }];
+    replay.marginPosture = [{
+      ...replay.marginPosture[0], finalSzi: '1', finalEntryPx: '100',
+      positionNotional: '101', unrealizedPnl: '1', marginRequired: '10.1',
+    }];
+    replay.riskSummary = {
+      cashBalance: '9999.5', unrealizedPnl: '1', accountValue: '10000.5',
+      totalMargin: '10.1', marginAvailable: '9990.4',
+    };
+    await redis.set(replayKey, JSON.stringify(replay));
+    seeded.dependencies.historicalReplay.mockResolvedValue(replay);
+
+    const storedFills = await redis.lrange(KEYS.USER_FILLS(seeded.user), 0, -1);
+    const clClose = JSON.parse(storedFills.find((raw) => JSON.parse(raw).tid === 13)!);
+    clClose.startPosition = '1';
+    clClose.sz = '1';
+    clClose.closedPnl = '49.5';
+    clClose.fee = '-0.03125';
+    const natGasClose = storedFills.find((raw) => JSON.parse(raw).tid === 14)!;
+    const natGasOpen = storedFills.find((raw) => JSON.parse(raw).tid === 12)!;
+    await redis.del(KEYS.USER_FILLS(seeded.user));
+    for (const raw of [natGasOpen, natGasClose, JSON.stringify(clClose)]) {
+      await redis.lpush(KEYS.USER_FILLS(seeded.user), raw);
+    }
+
+    const currentBalance = '10047.15625';
+    await redis.hset(KEYS.USER_ACCOUNT(seeded.user), 'balance', currentBalance);
+    seeded.dependencies.clearinghouseState.mockResolvedValue({
+      assetPositions: [],
+      crossMarginSummary: { accountValue: currentBalance },
+      marginSummary: { accountValue: currentBalance },
+      time: 2,
+    });
+    const receipt = await getCashLedgerEvidenceV2(seeded.request, seeded.dependencies);
+    expect(receipt.source_inventory.replay.rows[0]!.source.positions).toEqual([
+      { asset: 110029, coin: 'xyz:CL', szi: '1', entryPx: '100' },
+    ]);
+    expect(receipt.settled_usdc.ordinary_realized_pnl).toBe('48.5');
+    expect(receipt.settled_usdc.ordinary_fees).toBe('-0.15625');
+    expect(receipt.settled_usdc.current_balance).toBe(currentBalance);
+    expect(receipt.source_inventory.positions.rows).toEqual([]);
+  });
+
+  it('rejects the hostile fee mutation as an unreconstructible source', async () => {
+    const bytes = readFileSync('plans/fixtures/hypaper_cash_f7_s2_success.json');
+    const receipt = JSON.parse(bytes.toString('utf8')) as any;
+    receipt.source_inventory.ordinary_fills.rows[0].source.fee = '-0.0624';
+    expect(() => decodeCashLedgerEvidenceV2Receipt(canonicalJson(receipt))).toThrow();
+
+    const redis = new RedisMock();
+    const seeded = await seedV2Fixture(redis);
+    const fillKey = KEYS.USER_FILLS(seeded.user);
+    const fills = await redis.lrange(fillKey, 0, -1);
+    const first = JSON.parse(fills[0]!);
+    first.fee = '-0.0624';
+    await redis.del(fillKey);
+    for (const raw of [...fills].reverse()) {
+      await redis.lpush(fillKey, raw === fills[0] ? JSON.stringify(first) : raw);
+    }
+    await expect(getCashLedgerEvidenceV2(seeded.request, seeded.dependencies)).rejects.toMatchObject({ code: 'source_preimage' });
+  });
+
+  it('returns a typed redacted source-preimage error for member and manifest tampering', () => {
+    const bytes = readFileSync('plans/fixtures/hypaper_cash_f7_s2_success.json');
+    const receipt = JSON.parse(bytes.toString('utf8')) as any;
+    receipt.source_inventory.ordinary_fills.rows[0].source_digest = '0'.repeat(64);
+    let memberError: unknown;
+    try { decodeCashLedgerEvidenceV2Receipt(canonicalJson(receipt)); } catch (error) { memberError = error; }
+    expect(memberError).toBeInstanceOf(CashLedgerEvidenceV2CodecError);
+    expect((memberError as CashLedgerEvidenceV2CodecError).code).toBe('source_preimage');
+
+    const manifest = JSON.parse(bytes.toString('utf8')) as any;
+    manifest.source_inventory.orders.manifest.manifest_digest = '0'.repeat(64);
+    let manifestError: unknown;
+    try { decodeCashLedgerEvidenceV2Receipt(canonicalJson(manifest)); } catch (error) { manifestError = error; }
+    expect(manifestError).toBeInstanceOf(CashLedgerEvidenceV2CodecError);
+    expect((manifestError as CashLedgerEvidenceV2CodecError).code).toBe('source_preimage');
+  });
+
+  it('refuses owner, index, active-membership, optional-field, chronology, finality, byte-cap, and flatness drift', async () => {
+    const expectCode = async (
+      mutate: (seeded: Awaited<ReturnType<typeof seedV2Fixture>> & { redis: RedisMock }) => Promise<void>,
+      code: string,
+    ): Promise<void> => {
+      const redis = new RedisMock();
+      const seeded = await seedV2Fixture(redis);
+      await mutate({ ...seeded, redis });
+      await expect(getCashLedgerEvidenceV2(seeded.request, seeded.dependencies)).rejects.toMatchObject({ code });
+    };
+
+    await expectCode(async ({ redis }) => {
+      await redis.hset(KEYS.ORDER(21), 'userId', `0x${'f'.repeat(40)}`);
+    }, 'owner');
+    await expectCode(async ({ redis, user }) => {
+      await redis.del(KEYS.USER_ORDERS(user));
+    }, 'membership');
+    await expectCode(async ({ redis }) => {
+      await redis.sadd(KEYS.ORDERS_OPEN, '21');
+    }, 'membership');
+    await expectCode(async ({ redis }) => {
+      await redis.hset(KEYS.ORDER(21), 'isMarket', 'not-a-boolean');
+    }, 'identity');
+    await expectCode(async ({ redis }) => {
+      await redis.hset(KEYS.ORDER(21), 'updatedAt', '2899999');
+    }, 'chronology');
+    await expectCode(async ({ dependencies }) => {
+      dependencies.now.mockReturnValue(3_700_000);
+    }, 'finality');
+    await expectCode(async ({ dependencies }) => {
+      dependencies.maxBytes = 100;
+    }, 'byte_cap');
+    await expectCode(async ({ dependencies }) => {
+      dependencies.clearinghouseState.mockResolvedValue({
+        assetPositions: [{ type: 'oneWay', position: { coin: 'xyz:CL', szi: '1', entryPx: '150', unrealizedPnl: '0' } }],
+        crossMarginSummary: { accountValue: '9999.235' },
+        marginSummary: { accountValue: '9999.235' },
+        time: 2,
+      });
+    }, 'flatness');
+    await expectCode(async ({ redis, user }) => {
+      await redis.sadd(KEYS.USER_POSITIONS(user), '110029');
+      await redis.hset(KEYS.USER_POS(user, 110029),
+        'userId', user, 'asset', '110029', 'coin', 'xyz:CL', 'szi', '0',
+        'entryPx', '150', 'cumFunding', '0', 'cumFundingSinceOpen', '0', 'cumFundingSinceChange', '0');
+    }, 'flatness');
+  });
+
+  it('rejects noncanonical and duplicate V2 request bytes before schema use', () => {
+    const fixture = readV2Fixture();
+    const requestValue = {
+      type: 'getCashLedgerEvidenceV2', user: `0x${'1'.repeat(40)}`, dex: fixture.subject.dex,
+      coins: fixture.subject.coins, coverageStartMs: fixture.coverage.start_ms,
+      coverageEndMs: fixture.coverage.end_ms, finalFlatRequired: true,
+      scope: fixture.subject.scope, expectedReplayBatchId: fixture.subject.replay_batch_id,
+    };
+    const request = canonicalJson(requestValue);
+    expect(decodeCashLedgerEvidenceV2Request(request)).toMatchObject({ type: 'getCashLedgerEvidenceV2' });
+    expect(() => decodeCashLedgerEvidenceV2Request(` ${request}`)).toThrow();
+    expect(() => decodeCashLedgerEvidenceV2Request(request.replace('"dex":"xyz"', '"dex":"xyz","dex":"xyz"'))).toThrow();
+    expect(() => decodeCashLedgerEvidenceV2Request(request.replace('"coverageStartMs":3600000', '"coverageStartMs":3600000e0'))).toThrow();
+  });
+
+  it('fails closed before per-record fanout when the row cap is exceeded', async () => {
+    const redis = new RedisMock();
+    const seeded = await seedV2Fixture(redis);
+    seeded.dependencies.providerIdentity.max_evidence_rows = 1;
+    await expect(getCashLedgerEvidenceV2(seeded.request, seeded.dependencies)).rejects.toMatchObject({ code: 'row_cap' });
+    expect(seeded.dependencies.historicalReplay).not.toHaveBeenCalled();
+  });
+
+  it('refuses a torn second inventory read', async () => {
+    const redis = new RedisMock();
+    const seeded = await seedV2Fixture(redis);
+    let stateRead = 0;
+    seeded.dependencies.clearinghouseState.mockImplementation(async () => ({
+      assetPositions: [],
+      crossMarginSummary: { accountValue: stateRead === 0 ? '9999.235' : '9999.234' },
+      marginSummary: { accountValue: stateRead === 0 ? '9999.235' : '9999.234' },
+      time: stateRead++ === 0 ? 1 : 2,
+    }));
+    await expect(getCashLedgerEvidenceV2(seeded.request, seeded.dependencies)).rejects.toMatchObject({ code: 'stable_read' });
+  });
+
+  it('preserves exact long-precision signed rebate arithmetic', async () => {
+    const redis = new RedisMock();
+    const seeded = await seedV2Fixture(redis);
+    const fills = await redis.lrange(KEYS.USER_FILLS(seeded.user), 0, -1);
+    const first = JSON.parse(fills[0]!);
+    first.fee = '-0.00000000000000000000000000000000000001';
+    await redis.del(KEYS.USER_FILLS(seeded.user));
+    for (const raw of [...fills].reverse()) {
+      const value = raw === fills[0] ? JSON.stringify(first) : raw;
+      await redis.lpush(KEYS.USER_FILLS(seeded.user), value);
+    }
+    await expect(getCashLedgerEvidenceV2(seeded.request, seeded.dependencies)).rejects.toMatchObject({ code: 'source_preimage' });
+  });
+
+  it('computes the long-precision funding product exactly without ambient rounding', () => {
+    const Decimal = (DecimalModule.default ?? DecimalModule).clone({ precision: 128 });
+    const product = new Decimal('123456789012345678901234567890123456789')
+      .times('0.00000000000000000000000000000000000001')
+      .times('-0.1')
+      .toFixed();
+    expect(product).toBe('-0.123456789012345678901234567890123456789');
+  });
+
+  it('re-derives funding and correction identities deterministically', () => {
+    const asset = 110029;
+    const eventId = pnlFundingEventId(USER, asset, FUNDING_TIME);
+    const expectedEventId = `hpfe${createHash('sha256').update(`${USER}\0${asset}\0${FUNDING_TIME}`).digest('hex')}`;
+    expect(eventId).toBe(expectedEventId);
+    const correctionId = pnlFundingCorrectionId(USER, asset, FUNDING_TIME, eventId);
+    const expectedCorrectionId = `hpfc${createHash('sha256').update(`${USER}\0${asset}\0${FUNDING_TIME}\0${eventId}`).digest('hex')}`;
+    expect(correctionId).toBe(expectedCorrectionId);
+    expect(pnlFundingEventId(USER, asset, FUNDING_TIME)).toBe(eventId);
+    expect(pnlFundingCorrectionId(USER, asset, FUNDING_TIME, eventId)).toBe(correctionId);
   });
 });

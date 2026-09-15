@@ -10,6 +10,8 @@ const mockConfig = vi.hoisted(() => ({
   HISTORICAL_REPLAY_ENABLED: false,
   PNL_SNAPSHOT_ENABLED: false,
   CASH_LEDGER_EVIDENCE_ENABLED: false,
+  CASH_LEDGER_EVIDENCE_V2_ENABLED: false,
+  CASH_LEDGER_EVIDENCE_V2_MAX_BYTES: 100_000,
   FEE_RATE_TAKER: '0.00035',
 }));
 
@@ -64,6 +66,7 @@ describe('route validation', () => {
     mockConfig.HISTORICAL_REPLAY_ENABLED = false;
     mockConfig.PNL_SNAPSHOT_ENABLED = false;
     mockConfig.CASH_LEDGER_EVIDENCE_ENABLED = false;
+    mockConfig.CASH_LEDGER_EVIDENCE_V2_ENABLED = false;
   });
 
   it('rejects NaN order sizes on /exchange', async () => {
@@ -244,6 +247,48 @@ describe('route validation', () => {
       schema_version: 'HYPAPER_CASH_LEDGER_EVIDENCE_ERROR_V1', status: 'disabled', error_code: 'disabled',
     });
     expect(ensureAccount).not.toHaveBeenCalled();
+  });
+
+  it('returns the strict V2 disabled envelope before account or store access', async () => {
+    const hgetall = vi.spyOn(redisMock, 'hgetall');
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'getCashLedgerEvidenceV2', user: '0xAbC', dex: 'xyz', coins: ['xyz:CL'],
+        coverageStartMs: 0, coverageEndMs: 0, finalFlatRequired: true,
+        scope: 'whole_account_replay_epoch', expectedReplayBatchId: `hprb${'1'.repeat(64)}`,
+      }),
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      schema_version: 'HYPAPER_CASH_LEDGER_EVIDENCE_ERROR_V2', status: 'disabled', error_code: 'disabled',
+    });
+    expect(ensureAccount).not.toHaveBeenCalled();
+    expect(hgetall).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid V2 requests before calling the engine or account middleware', async () => {
+    const hgetall = vi.spyOn(redisMock, 'hgetall');
+    mockConfig.CASH_LEDGER_EVIDENCE_V2_ENABLED = true;
+    const app = new Hono();
+    app.route('/hypaper', hypaperRouter);
+    const res = await app.request('/hypaper', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'getCashLedgerEvidenceV2', user: '0xabc', dex: 'xyz', coins: ['xyz:CL', 'xyz:CL'],
+        coverageStartMs: 0, coverageEndMs: 0, finalFlatRequired: true,
+        scope: 'whole_account_replay_epoch', expectedReplayBatchId: `hprb${'1'.repeat(64)}`,
+        extra: true,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      schema_version: 'HYPAPER_CASH_LEDGER_EVIDENCE_ERROR_V2', status: 'refused', error_code: 'invalid_request',
+    });
+    expect(ensureAccount).not.toHaveBeenCalled();
+    expect(hgetall).not.toHaveBeenCalled();
   });
 
   it('rejects hostile evidence requests without account access', async () => {

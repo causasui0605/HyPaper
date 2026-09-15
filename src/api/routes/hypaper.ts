@@ -19,17 +19,25 @@ import { getPnlSnapshot, PnlSnapshotError } from '../../engine/pnl.js';
 import { getPnlSnapshotRequestSchema } from '../../types/pnl.js';
 import {
   CashLedgerEvidenceError,
+  CashLedgerEvidenceV2Error,
   getCashLedgerEvidence,
+  getCashLedgerEvidenceV2,
+  buildCashLedgerEvidenceV2Error,
 } from '../../engine/cash-ledger-evidence.js';
 import {
   CASH_LEDGER_EVIDENCE_ERROR_SCHEMA,
   cashLedgerEvidenceRequestSchema,
   encodeCashLedgerEvidenceReceipt,
+  CASH_LEDGER_EVIDENCE_ERROR_V2_SCHEMA,
+  CashLedgerEvidenceV2CodecError,
+  decodeCashLedgerEvidenceV2Request,
+  encodeCashLedgerEvidenceV2Receipt,
 } from '../../types/cash-ledger-evidence.js';
 
 export const hypaperRouter = new Hono();
 
 hypaperRouter.post('/', async (c) => {
+  const rawRequest = c.req.raw.clone();
   const rawBody: unknown = await c.req.json();
   const body = rawBody as Record<string, unknown>;
   const type = rawBody !== null && typeof rawBody === 'object' && !Array.isArray(rawBody)
@@ -71,6 +79,59 @@ hypaperRouter.post('/', async (c) => {
       }
       return c.json({
         schema_version: CASH_LEDGER_EVIDENCE_ERROR_SCHEMA,
+        status: 'error',
+        error_code: 'internal',
+      }, 500);
+    }
+  }
+
+  if (type === 'getCashLedgerEvidenceV2') {
+    if (!config.CASH_LEDGER_EVIDENCE_V2_ENABLED) {
+      return c.json({
+        schema_version: CASH_LEDGER_EVIDENCE_ERROR_V2_SCHEMA,
+        status: 'disabled',
+        error_code: 'disabled',
+      }, 403);
+    }
+    let request;
+    try {
+      request = decodeCashLedgerEvidenceV2Request(await rawRequest.text());
+    } catch {
+      return c.json({
+        schema_version: CASH_LEDGER_EVIDENCE_ERROR_V2_SCHEMA,
+        status: 'refused',
+        error_code: 'invalid_request',
+      }, 400);
+    }
+    try {
+      const receipt = await getCashLedgerEvidenceV2(request);
+      const bytes = encodeCashLedgerEvidenceV2Receipt(receipt);
+      return new Response(bytes, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    } catch (err) {
+      logger.warn({ type }, 'Cash ledger evidence V2 refused');
+      if (err instanceof CashLedgerEvidenceV2Error) {
+        const wire = buildCashLedgerEvidenceV2Error(err);
+        return c.json(wire, err.status);
+      }
+      if (err instanceof CashLedgerEvidenceV2CodecError) {
+        return c.json({
+          schema_version: CASH_LEDGER_EVIDENCE_ERROR_V2_SCHEMA,
+          status: err.status === 500 ? 'error' : 'refused',
+          error_code: err.code,
+        }, err.status);
+      }
+      if (err instanceof ZodError) {
+        return c.json({
+          schema_version: CASH_LEDGER_EVIDENCE_ERROR_V2_SCHEMA,
+          status: 'refused',
+          error_code: 'invalid_request',
+        }, 400);
+      }
+      return c.json({
+        schema_version: CASH_LEDGER_EVIDENCE_ERROR_V2_SCHEMA,
         status: 'error',
         error_code: 'internal',
       }, 500);
