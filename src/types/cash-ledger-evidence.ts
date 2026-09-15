@@ -594,7 +594,7 @@ const v2FillSchema = z.object({
   crossed: z.boolean(),
   fee: decimalSchema,
   tid: safeIntegerSchema,
-  cloid: z.string().min(1).nullable(),
+  cloid: z.string().min(1).regex(/^[\x20-\x7e]+$/).optional(),
   feeToken: z.literal('USDC'),
 }).strict();
 export const cashLedgerEvidenceV2FillSchema = v2FillSchema;

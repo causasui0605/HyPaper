@@ -1,6 +1,6 @@
 # HYPAPER-CASH-F7-S2-F1: preserve fill cloid omission and post-stability clock
 
-- status: ready
+- status: implemented
 - numeric: true
 - owner: HyPaper
 - date: 2026-09-15
@@ -9,6 +9,9 @@
 - baseline: `npm run build` PASS; `npm run test:run` PASS (18 files, 296 tests)
 - reviewer: dedicated Opus profile; settings SHA-256 `1e6c6ed7dc47b149986645f2f0893a50473fb61371efdc4da1a45d046bb8d6e7`
 - ref manifest: 5 local `ms/*` refs; terminal-LF SHA-256 `459c8b5813b32bc58d2348e18efe267ab8fc5b5863a13462e19dc29f7e849c52`
+- implemented: 2026-09-15
+- result: exact three-path patch `2eda73f28f19b685b83994000037c254a37ef313e5e46850720e38f447320155`; build and 299-test gate PASS; Opus sterile Cycle 1 approve (7/8, no blockers); independent numeric PASS (9/9 named checks including all original 52 comparisons)
+- archive: `/Users/dylan/kit_archives/hypaper/HYPAPER-CASH-F7-S2-F1/20260915T151743Z`; manifest SHA-256 `ce1e09ee72e33a367f5faa35fd28927762236fd18b70a66320c12cbe16f18547`
 
 This is a narrow successor to promoted `HYPAPER-CASH-F7-S2`. It corrects two
 provider-contract drifts discovered during consumer adoption. The prior S2
@@ -17,28 +20,28 @@ these two boundaries.
 
 ## Acceptance
 
-- [ ] In each V2 ordinary-fill public `source`, `cloid` is optional. An absent
+- [x] In each V2 ordinary-fill public `source`, `cloid` is optional. An absent
   stored `cloid` remains absent in the source object and canonical bytes; it is
   never synthesized as `null`.
-- [ ] A present ordinary-fill `cloid` is accepted only as a non-empty printable
+- [x] A present ordinary-fill `cloid` is accepted only as a non-empty printable
   ASCII string. Explicit `null`, the empty string, non-ASCII, control
   characters, or a non-string refuse through the existing strict typed error.
-- [ ] Member, collection, inventory, settled-evidence and receipt digests are
+- [x] Member, collection, inventory, settled-evidence and receipt digests are
   computed from the exact canonical object with the absent key omitted. Tests
   prove absent and present cases produce their independently expected bytes and
   digests, and that adding/removing the key changes the digest.
-- [ ] `coverage.observed_at_ms` is sampled only after the second complete V2
+- [x] `coverage.observed_at_ms` is sampled only after the second complete V2
   source capture and the stable-state equality comparison both succeed.
-- [ ] After the observation clock is sampled, the V2 success path performs no
+- [x] After the observation clock is sampled, the V2 success path performs no
   store or source read. The sampled value is used consistently in the final
   receipt and chronology validation; a dynamic clock test proves call order and
   the absence of post-observation reads.
-- [ ] Existing V1 schemas, V1 bytes, routes, feature flags, source ordering,
+- [x] Existing V1 schemas, V1 bytes, routes, feature flags, source ordering,
   account/order/position projections, arithmetic, zero tolerance, resource
   caps, privacy rules and refusal taxonomy remain unchanged.
-- [ ] Focused tests cover ordinary-fill `cloid` absent, present, explicit null,
+- [x] Focused tests cover ordinary-fill `cloid` absent, present, explicit null,
   empty/malformed, exact digest omission, and the clock/stable-read ordering.
-- [ ] `npm run build` and `npm run test:run` pass; the exact patch receives a
+- [x] `npm run build` and `npm run test:run` pass; the exact patch receives a
   valid Opus sterile approval before numeric verification and close-out.
 
 ## Allowed paths
@@ -105,6 +108,6 @@ production/test expected values as the arithmetic or digest oracle.
 
 ## Next
 
-Run the registered implementer on the exact three product/test paths, then full
-offline gates, Opus sterile review, independent numeric verification and archive
-close-out.
+Obtain separate human authorization before any local promotion. Consumer
+adoption remains closed until that reviewed result is promoted and independently
+revalidated.

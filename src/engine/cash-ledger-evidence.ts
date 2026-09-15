@@ -833,7 +833,6 @@ function v2NormalizeFill(user: string, raw: string, ordinal: number): CashLedger
   const parsedRaw = v2CanonicalRaw(raw, `ordinary fill ${ordinal}`);
   if (parsedRaw === null || typeof parsedRaw !== 'object' || Array.isArray(parsedRaw)) v2Refuse('ordinary fill is malformed', 'missing_source');
   const candidate = { ...(parsedRaw as Record<string, unknown>) };
-  if (!Object.prototype.hasOwnProperty.call(candidate, 'cloid')) candidate.cloid = null;
   const parsed = cashLedgerEvidenceV2FillSchema.safeParse(candidate);
   if (!parsed.success || parsed.data.hash !== `0x${parsed.data.tid.toString(16).padStart(64, '0')}`) v2Refuse('ordinary fill identity is malformed', 'identity');
   if (parsed.data.coin.length === 0 || user.length === 0) v2Refuse('ordinary fill identity is malformed', 'identity');
@@ -1352,6 +1351,12 @@ export async function getCashLedgerEvidenceV2(
   const residual = v2Subtract(accountSource.balance, expected);
   if (!residual.isZero()) v2Refuse('settled-USDC source inventory does not reconcile', 'source_preimage');
 
+  const rawBytes = v2RawBytes(first);
+  if (rawBytes > d.maxBytes) v2Refuse('source inventory exceeds byte cap', 'byte_cap');
+
+  const second = await captureV2(user, d, d.providerIdentity.max_evidence_rows);
+  if (v2StableReadValue(first) !== v2StableReadValue(second)) v2Refuse('mutable evidence changed during derivation', 'stable_read');
+
   const now = d.now();
   if (!Number.isSafeInteger(now) || now < d.providerIdentity.correction_finality_ms) v2Refuse('finality watermark is unavailable', 'finality');
   const watermark = now - d.providerIdentity.correction_finality_ms;
@@ -1440,8 +1445,6 @@ export async function getCashLedgerEvidenceV2(
     ...base,
     receipt_digest: domainDigest(CASH_LEDGER_EVIDENCE_V2_SCHEMA, base),
   });
-  const rawBytes = v2RawBytes(first);
-  if (rawBytes > d.maxBytes) v2Refuse('source inventory exceeds byte cap', 'byte_cap');
   let encoded: Uint8Array;
   try {
     encoded = encodeCashLedgerEvidenceV2Receipt(receipt);
@@ -1449,8 +1452,6 @@ export async function getCashLedgerEvidenceV2(
     v2Refuse('V2 receipt is not internally reconstructible', 'arithmetic');
   }
   if (encoded.byteLength > d.maxBytes) v2Refuse('receipt exceeds byte cap', 'byte_cap');
-  const second = await captureV2(user, d, d.providerIdentity.max_evidence_rows);
-  if (v2StableReadValue(first) !== v2StableReadValue(second)) v2Refuse('mutable evidence changed during derivation', 'stable_read');
   return receipt;
 }
 

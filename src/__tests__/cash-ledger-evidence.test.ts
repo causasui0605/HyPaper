@@ -668,6 +668,44 @@ async function seedV2Fixture(redis: RedisMock): Promise<{
   return { fixture, user, request, dependencies };
 }
 
+async function rewriteV2Fill(
+  redis: RedisMock,
+  user: string,
+  tid: number,
+  mutate: (source: Record<string, unknown>) => void,
+): Promise<void> {
+  const key = KEYS.USER_FILLS(user);
+  const stored = await redis.lrange(key, 0, -1);
+  const rewritten = stored.map((raw) => {
+    const source = JSON.parse(raw) as Record<string, unknown>;
+    if (source.tid !== tid) return raw;
+    mutate(source);
+    return JSON.stringify(source);
+  });
+  await redis.del(key);
+  for (const raw of [...rewritten].reverse()) await redis.lpush(key, raw);
+}
+
+function independentCanonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(independentCanonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => (
+      left < right ? -1 : left > right ? 1 : 0
+    ));
+    return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${independentCanonicalJson(child)}`).join(',')}}`;
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) throw new Error('independent canonical JSON encoding failed');
+  return encoded;
+}
+
+function independentDigest(domain: string, value: unknown): string {
+  return createHash('sha256')
+    .update(`${domain}\n`, 'ascii')
+    .update(independentCanonicalJson(value), 'utf8')
+    .digest('hex');
+}
+
 describe('cash ledger evidence V2 reconstructible source', () => {
   it('round-trips the immutable success fixture byte-for-byte', () => {
     const bytes = readFileSync('plans/fixtures/hypaper_cash_f7_s2_success.json');
@@ -675,6 +713,140 @@ describe('cash ledger evidence V2 reconstructible source', () => {
     const receipt = decodeCashLedgerEvidenceV2Receipt(payload);
     expect(Buffer.from(encodeCashLedgerEvidenceV2Receipt(receipt))).toEqual(Buffer.from(payload));
     expect(receipt.schema_version).toBe(CASH_LEDGER_EVIDENCE_V2_SCHEMA);
+  });
+
+  it('preserves absent and present ordinary-fill cloid shapes through every V2 digest layer', async () => {
+    const absentRedis = new RedisMock();
+    const absentSeeded = await seedV2Fixture(absentRedis);
+    await rewriteV2Fill(absentRedis, absentSeeded.user, 14, (source) => { delete source.cloid; });
+    const absent = await getCashLedgerEvidenceV2(absentSeeded.request, absentSeeded.dependencies);
+
+    const presentRedis = new RedisMock();
+    const presentSeeded = await seedV2Fixture(presentRedis);
+    await rewriteV2Fill(presentRedis, presentSeeded.user, 14, (source) => { source.cloid = 'present-fill~'; });
+    const present = await getCashLedgerEvidenceV2(presentSeeded.request, presentSeeded.dependencies);
+
+    const absentFill = absent.source_inventory.ordinary_fills.rows.find((row) => row.identity === '14')!;
+    const presentFill = present.source_inventory.ordinary_fills.rows.find((row) => row.identity === '14')!;
+    expect(Object.prototype.hasOwnProperty.call(absentFill.source, 'cloid')).toBe(false);
+    expect(independentCanonicalJson(absentFill.source)).not.toContain('cloid');
+    expect(presentFill.source.cloid).toBe('present-fill~');
+    expect(independentCanonicalJson(presentFill.source)).toContain('"cloid":"present-fill~"');
+
+    for (const receipt of [absent, present]) {
+      const fill = receipt.source_inventory.ordinary_fills.rows.find((row) => row.identity === '14')!;
+      const collection = receipt.source_inventory.ordinary_fills;
+      const collectionCore = {
+        count: collection.rows.length,
+        identities: collection.rows.map((row) => row.identity),
+        source_digests: collection.rows.map((row) => row.source_digest),
+      };
+      const { inventory_digest: _inventoryDigest, ...inventoryWithoutDigest } = receipt.source_inventory;
+      const { receipt_digest: _receiptDigest, ...receiptWithoutDigest } = receipt;
+      expect(fill.source_digest).toBe(independentDigest('HYPAPER_CASH_SOURCE_FILL_V2', fill.source));
+      expect(collection.manifest.manifest_digest).toBe(independentDigest('HYPAPER_CASH_SOURCE_MANIFEST_V2', collectionCore));
+      expect(receipt.source_inventory.inventory_digest).toBe(independentDigest('HYPAPER_CASH_SOURCE_INVENTORY_V2', inventoryWithoutDigest));
+      expect(receipt.settled_usdc.evidence_sha256).toBe(receipt.source_inventory.inventory_digest);
+      expect(receipt.receipt_digest).toBe(independentDigest('HYPAPER_CASH_LEDGER_EVIDENCE_V2', receiptWithoutDigest));
+      expect(Buffer.from(encodeCashLedgerEvidenceV2Receipt(receipt)).toString('utf8')).toBe(independentCanonicalJson(receipt));
+    }
+
+    expect(absentFill.source_digest).not.toBe(presentFill.source_digest);
+    expect(absent.source_inventory.ordinary_fills.manifest.manifest_digest)
+      .not.toBe(present.source_inventory.ordinary_fills.manifest.manifest_digest);
+    expect(absent.source_inventory.inventory_digest).not.toBe(present.source_inventory.inventory_digest);
+    expect(absent.settled_usdc.evidence_sha256).not.toBe(present.settled_usdc.evidence_sha256);
+    expect(absent.receipt_digest).not.toBe(present.receipt_digest);
+  });
+
+  it('refuses null, empty, non-ASCII, control, and non-string ordinary-fill cloids', async () => {
+    const invalidValues: Array<{ name: string; value: unknown }> = [
+      { name: 'explicit null', value: null },
+      { name: 'empty', value: '' },
+      { name: 'non-ASCII', value: 'fill-é' },
+      { name: 'control character', value: 'fill-\n' },
+      { name: 'non-string', value: 14 },
+    ];
+    for (const { name, value } of invalidValues) {
+      const redis = new RedisMock();
+      const seeded = await seedV2Fixture(redis);
+      await rewriteV2Fill(redis, seeded.user, 14, (source) => { source.cloid = value; });
+      let error: unknown;
+      try {
+        await getCashLedgerEvidenceV2(seeded.request, seeded.dependencies);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error, name).toBeInstanceOf(CashLedgerEvidenceV2Error);
+      expect(error, name).toMatchObject({ code: 'identity' });
+    }
+  });
+
+  it('samples observed_at_ms after stable comparison and performs no reads afterward', async () => {
+    const redis = new RedisMock();
+    const seeded = await seedV2Fixture(redis);
+    const callOrder: string[] = [];
+    const readsAfterObserved: string[] = [];
+    let observed = false;
+    let stateCalls = 0;
+
+    const readMethods = new Set(['get', 'hgetall', 'lrange', 'llen', 'smembers', 'zrange', 'zcard', 'keys']);
+    const instrumentedRedis = new Proxy(redis, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof property !== 'string' || !readMethods.has(property) || typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          if (observed) readsAfterObserved.push(property);
+          return value.apply(target, args);
+        };
+      },
+    });
+    seeded.dependencies.redis = instrumentedRedis;
+
+    const originalState = seeded.dependencies.clearinghouseState;
+    seeded.dependencies.clearinghouseState = vi.fn(async (...args: unknown[]) => {
+      if (observed) readsAfterObserved.push('clearinghouseState');
+      const state = await originalState(...args) as Record<string, unknown>;
+      stateCalls += 1;
+      if (stateCalls !== 2) return state;
+      const secondState = { ...state };
+      Object.defineProperty(secondState, 'time', {
+        configurable: true,
+        enumerable: true,
+        get: () => {
+          callOrder.push('stable-compare');
+          return 2;
+        },
+      });
+      callOrder.push('capture-2-complete');
+      return secondState;
+    });
+    const originalOpenOrders = seeded.dependencies.openOrders;
+    seeded.dependencies.openOrders = vi.fn(async (...args: unknown[]) => {
+      if (observed) readsAfterObserved.push('openOrders');
+      return originalOpenOrders(...args);
+    });
+    const originalReplay = seeded.dependencies.historicalReplay;
+    seeded.dependencies.historicalReplay = vi.fn(async (...args: unknown[]) => {
+      if (observed) readsAfterObserved.push('historicalReplay');
+      return originalReplay(...args);
+    });
+    seeded.dependencies.now = vi.fn(() => {
+      callOrder.push('observed');
+      observed = true;
+      return seeded.fixture.coverage.observed_at_ms;
+    });
+
+    const receipt = await getCashLedgerEvidenceV2(seeded.request, seeded.dependencies);
+    const captureComplete = callOrder.indexOf('capture-2-complete');
+    const stableCompare = callOrder.indexOf('stable-compare');
+    const observation = callOrder.indexOf('observed');
+    expect(receipt.coverage.observed_at_ms).toBe(seeded.fixture.coverage.observed_at_ms);
+    expect(stateCalls).toBe(2);
+    expect(captureComplete).toBeGreaterThanOrEqual(0);
+    expect(stableCompare).toBeGreaterThan(captureComplete);
+    expect(observation).toBeGreaterThan(stableCompare);
+    expect(readsAfterObserved).toEqual([]);
   });
 
   it('reconstructs the complete fixture-shaped account without mutation', async () => {
