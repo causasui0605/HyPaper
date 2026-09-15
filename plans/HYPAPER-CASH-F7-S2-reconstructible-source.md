@@ -1,16 +1,18 @@
 # HYPAPER-CASH-F7-S2: reconstructible public cash source
 
-- status: draft
+- status: ready
 - numeric: true
 - owner: HyPaper
 - date: 2026-09-15
-- adoption base: `51d0aeacce8d60e10b4dad3e6d54d66ba705fd84`
-- adoption tree: `d777a4866e3afa0dc1cdab32441d28437c5a55e8`
+- provider source base: `51d0aeacce8d60e10b4dad3e6d54d66ba705fd84`
+- provider source tree: `d777a4866e3afa0dc1cdab32441d28437c5a55e8`
+- implementation adoption base: `d6fbd82a6ef985529f6944ba69362918a22dc555`
+- implementation adoption tree: `3b2f2374041799ad65727cc5b9e6a3c1df89fb18`
 
-This is an offline provider-owned preflight. It authorizes only this plan and
-append-only decision bookkeeping. It does not authorize readiness,
-implementation, review, network/account/store access, a service, notification,
-trading, promotion, merge, or push.
+This ready milestone is authorized only for offline implementation, configured
+gates, Opus sterile review, independent numeric verification, archive and
+close-out. It does not authorize network/account/store access, a running
+service, notification, trading, promotion, merge, or push.
 
 ## Pinned consumer request and provider evidence
 
@@ -253,7 +255,7 @@ separate schema-only probe confirmed that the nested replay payload and stored
 result match the pinned production Zod schemas; production arithmetic was not
 used as the expected-value oracle.
 
-## Proposed implementation allowlist and acceptance
+## Frozen allowed_paths and acceptance criteria
 
 Exactly six product/test paths, unchanged from S1:
 
@@ -264,8 +266,16 @@ Exactly six product/test paths, unchanged from S1:
 - `src/__tests__/cash-ledger-evidence.test.ts`
 - `src/__tests__/route-validation.test.ts`
 
-Plan, the three `plans/fixtures/hypaper_cash_f7_s2_*.json` design fixtures,
-and append-only decision bookkeeping are the only preflight paths.
+The milestone plan and append-only decision bookkeeping are close-out-only
+paths. The three already tracked `plans/fixtures/hypaper_cash_f7_s2_*.json`
+files are immutable review references, not implementation paths. Their bytes
+must not change during implementation.
+
+Review references:
+
+- `plans/fixtures/hypaper_cash_f7_s2_success.json`
+- `plans/fixtures/hypaper_cash_f7_s2_hostile.json`
+- `plans/fixtures/hypaper_cash_f7_s2_expected.json`
 Writers, store keys, replay/funding/order/position engines and existing V1
 semantics are read-only dependencies.
 
@@ -288,11 +298,21 @@ The only unmerged `ms/*` ref at inspection was
 already independently parked; the one-row terminal-LF manifest SHA-256 was
 `6534c1a3700b905a3dc4e9393ed9e979770ef7f24d49f45f4e8e3ef0d8578248`.
 
-The two prior offline readiness gaps are closed at candidate level: bilateral
+The two prior offline readiness gaps are closed: bilateral
 consumer acceptance covers the position/account/order corrections, and the
 complete fixture/digest manifest above is frozen. Before readiness, the owner
-must still perform a fresh same-tree digest/ref/isolation/baseline
-revalidation; that is a workflow gate, not an unresolved schema decision.
+completed a fresh same-tree digest/ref/isolation/baseline revalidation from
+implementation adoption base `d6fbd82a6ef985529f6944ba69362918a22dc555`.
+The takeover snapshot is
+`/Users/dylan/work/hypaper-worktrees/cash-f7-s2-preflight-20260915/.codex/tmp/takeover/HYPAPER-CASH-F7-S2/20260915T115958Z`.
+The worktree and full index were clean. The only unmerged milestone ref remained
+the previously parked `ms/CO-M17-hypaper-historical-replay-import` at
+`4ff0cd469e600481e9f90a20469e8606f8f58299`.
+
+Reviewer isolation inputs are tracked, regular, non-symlink files. The
+dedicated reviewer profile is frozen to `model=opus`, `effortLevel=high`; its
+settings SHA-256 is
+`1e6c6ed7dc47b149986645f2f0893a50473fb61371efdc4da1a45d046bb8d6e7`.
 
 There is also a capability boundary: upstream publication preimages and
 pre-rounded Redis cash digits do not exist in current source state. S2 must
@@ -339,6 +359,7 @@ landings and no unaudited scout numbers in this preflight.
 
 ## Next
 
-Under separate authority, perform fresh same-tree
-digest/ref/isolation/baseline revalidation before any `draft -> ready`
-decision and implementation pipeline.
+Run the registered offline implementer on exactly the six allowed paths,
+followed by configured full gates, sterile Opus review, independent numeric
+verification against actual reviewed outputs, archive and close-out. Stop
+before any promotion or runtime action.
