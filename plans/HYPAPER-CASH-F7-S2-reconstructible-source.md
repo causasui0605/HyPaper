@@ -240,6 +240,14 @@ Fresh offline baseline gates at the adoption base passed after an offline,
 ignored dependency install: `npm run build` PASS; `npm run test:run` PASS with
 18 files and 281 tests. No product or test byte changed.
 
+Draft freeze commit: `d6bc865da5775baffe9596adac37dbdc7abd1f21`,
+tree `522e9d9e485463a09426d10b1069df99afa3b81c`. The plan SHA-256 at that
+freeze was `1280746e68e31368c39bd3ce05d12ac15ee7af506669f3b6d302eb12bfa0133f`.
+
+UNREVIEWED LANDINGS: none. The only new commit contains this draft plan and
+its append-only decision entry, with no product/test landing. SCOUT NUMBERS:
+none; all numeric values are explicitly synthetic, byte-bound test vectors.
+
 Wrapup audit: no product code or empirical result landed. The numeric values
 above are content-bound synthetic test vectors. There are no unreviewed product
 landings and no unaudited scout numbers in this preflight.
