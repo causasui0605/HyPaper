@@ -421,9 +421,11 @@ landings and no unaudited scout numbers in this preflight.
 
 ## Next
 
-Use the promoted provider V2 seam as the frozen dependency for consumer-side
-cash integration. Runtime, network, account/store access, service activation,
-trading, any other main merge, and push remain unauthorized.
+Keep consumer adoption closed. After separate human authorization, freeze and
+review a narrow successor correcting ordinary-fill `cloid` omission semantics
+and the V2 observation-clock ordering. Runtime, network, account/store access,
+service activation, trading, any other main merge, and push remain
+unauthorized.
 
 ## Close-out evidence
 
@@ -453,3 +455,23 @@ Local promotion fast-forwarded `yihao` from
 full 18-file / 296-test Vitest suite passed. The six reviewed product/test
 postimages, approved patch digest, and archive manifest all revalidated
 exactly; no product conflict or non-fast-forward merge occurred.
+
+## Post-promotion interface stop state
+
+A read-only comparison against the pinned consumer proposal found two exact
+contract drifts in the promoted V2 bytes:
+
+- the proposal freezes ordinary-fill `cloid` as optional and requires an
+  absent stored field to remain absent, while the promoted V2 schema requires
+  `cloid` to be present as string-or-null and normalization synthesizes null;
+- the proposal requires `observed_at_ms` to be sampled after the second raw
+  capture and stable comparison, while the promoted implementation samples
+  the clock before that second capture.
+
+The prior Opus approval and 65/65 numeric PASS remain valid historical evidence
+for the exact reviewed patch; they are not withdrawn or rewritten. Their
+fixtures use present string `cloid` values and a fixed clock, so neither gate
+exercised the absent-field wire shape or dynamically proved clock/capture call
+order. Consumer adoption is therefore blocked until a separately authorized,
+reviewed and promoted narrow successor corrects both loci. No product byte was
+changed during this audit.
