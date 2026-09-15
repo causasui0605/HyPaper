@@ -1,6 +1,6 @@
 # HYPAPER-CASH-F7-S2: reconstructible public cash source
 
-- status: implemented
+- status: promoted
 - numeric: true
 - owner: HyPaper
 - date: 2026-09-15
@@ -13,6 +13,7 @@
   frozen paths; full build and 296-test gate passed, Opus sterile review
   approved, and independent numeric verification passed 65/65 at zero
   tolerance against actual reviewed output.
+- promoted: 2026-09-15 to local provider integration branch `yihao`
 
 This ready milestone is authorized only for offline implementation, configured
 gates, Opus sterile review, independent numeric verification, archive and
@@ -420,9 +421,9 @@ landings and no unaudited scout numbers in this preflight.
 
 ## Next
 
-Await separate human authorization for local promotion and any consumer-side
-adoption. Runtime, network, account/store access, service activation, trading,
-merge and push remain unauthorized.
+Use the promoted provider V2 seam as the frozen dependency for consumer-side
+cash integration. Runtime, network, account/store access, service activation,
+trading, any other main merge, and push remain unauthorized.
 
 ## Close-out evidence
 
@@ -445,3 +446,10 @@ the readiness and contract commits are plan-only bookkeeping, and the sole
 product/test landing is the `[implemented+reviewed]` close-out above. No scout
 numbers remain: all durable numeric values are synthetic byte-bound fixtures
 and were independently verified by this numeric milestone gate.
+
+Local promotion fast-forwarded `yihao` from
+`51d0aeacce8d60e10b4dad3e6d54d66ba705fd84` to the reviewed wrapup
+`97a94378471eaf96c461abf71fc92b2dfd31f118`. Post-promotion build and the
+full 18-file / 296-test Vitest suite passed. The six reviewed product/test
+postimages, approved patch digest, and archive manifest all revalidated
+exactly; no product conflict or non-fast-forward merge occurred.
