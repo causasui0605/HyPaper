@@ -301,9 +301,15 @@ Draft freeze commit: `d6bc865da5775baffe9596adac37dbdc7abd1f21`,
 tree `522e9d9e485463a09426d10b1069df99afa3b81c`. The plan SHA-256 at that
 freeze was `1280746e68e31368c39bd3ce05d12ac15ee7af506669f3b6d302eb12bfa0133f`.
 
-UNREVIEWED LANDINGS: none. The only new commit contains this draft plan and
-its append-only decision entry, with no product/test landing. SCOUT NUMBERS:
-none; all numeric values are explicitly synthetic, byte-bound test vectors.
+Complete conditional fixture freeze commit:
+`b2173ebc94e1860c24bd6818b12ed4eab7c66b0a`, tree
+`0d1db7004054d70b7c14b54d3bcebe049d9f118b`; plan SHA-256 at that freeze
+was `78455b5b94544cdc0b24fc3f0a891eda9219d457e183d26da1c46385947a4fbd`.
+
+UNREVIEWED LANDINGS: none. New commits contain only this draft plan, three
+plan-owned synthetic fixture files, and the append-only decision entry, with no
+product/test landing. SCOUT NUMBERS: none; all numeric values are explicitly
+synthetic, byte-bound test vectors.
 
 Wrapup audit: no product code or empirical result landed. The numeric values
 above are content-bound synthetic test vectors. There are no unreviewed product
