@@ -4,12 +4,12 @@
 
 ## Next
 
-Implement, gate, review, archive.
+Build and deploy an image from this commit, then continue the consumer (tholos) close-out.
 
 ## Milestones
 
 ### HYPAPER-CASH-F7-S3-ioc-order-index: every created order is in its user's order index
-- status: in-progress
+- status: implemented
 - numeric: false
 - context: an end-to-end run on an isolated HyPaper (same image, fresh
   Redis/Postgres, throwaway wallet, 2026-09-26) imported a replay, opened and
@@ -61,3 +61,7 @@ Implement, gate, review, archive.
   returned HTTP 200 with a success receipt, which the consumer's independent
   verifier accepted. The same flow on the unfixed image refused
   `owned order is absent from user order index`.
+- closeout (2026-09-26): implemented interactively (Claude); cross-vendor
+  Codex review cycle 1 revise (test-coverage: no writer-to-V2 test), cycle 2
+  approve 6/6. Archive ~/kit_archives/hypaper/HYPAPER-CASH-F7-S3-ioc-order-index/20260926T221342Z. Gate: build PASS,
+  20 files / 306 tests. Not merged or pushed.

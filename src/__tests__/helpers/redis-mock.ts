@@ -49,7 +49,11 @@ export class RedisMock {
 
   // --- Hash commands ---
 
-  async hset(key: string, ...args: string[]): Promise<number> {
+  async hset(key: string, ...input: Array<string | Record<string, string>>): Promise<number> {
+    // ioredis also accepts one field/value object; accept both shapes.
+    const args = input.length === 1 && typeof input[0] === 'object'
+      ? Object.entries(input[0]).flat()
+      : input as string[];
     if (!this.hashes.has(key)) this.hashes.set(key, new Map());
     const hash = this.hashes.get(key)!;
     let count = 0;
@@ -282,7 +286,7 @@ class PipelineMock {
     this.redis = redis;
   }
 
-  hset(key: string, ...args: string[]): this {
+  hset(key: string, ...args: Array<string | Record<string, string>>): this {
     this.commands.push(() => this.redis.hset(key, ...args));
     return this;
   }

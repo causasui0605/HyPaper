@@ -249,6 +249,9 @@ async function saveOrder(order: PaperOrder): Promise<void> {
 
   const pipeline = redis.pipeline();
   pipeline.hset(KEYS.ORDER(order.oid), data);
+  // Every created order belongs to its user's order index, including one that
+  // fills immediately and never rests; the index is the owned-order inventory.
+  pipeline.zadd(KEYS.USER_ORDERS(order.userId), order.createdAt, order.oid.toString());
   if (order.cloid) {
     // Stored lowercase so orderStatus/cancelByCloid lookups are case-stable.
     pipeline.hset(KEYS.USER_CLOIDS(order.userId), order.cloid.toLowerCase(), order.oid.toString());
