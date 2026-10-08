@@ -115,6 +115,7 @@ Mirrors [HL's info endpoint](https://hyperliquid.gitbook.io/hyperliquid-docs/for
 | `userFillsByTime` | `{"user": "0x...", "startTime": ..., "endTime": ...}` | Fills filtered by time |
 | `orderStatus` | `{"oid": 123}` | Status of a specific order |
 | `activeAssetCtx` | `{"coin": "BTC"}` | Asset context (funding, OI, mark price) |
+| `activeAssetData` | `{"user": "0x...", "coin": "xyz:TSM"}` | Upstream HL answer with `leverage` replaced by the paper setting stored by `updateLeverage` (`{"type":"cross","value":N}` or `{"type":"isolated","value":N,"rawUsd":R}`). Other fields (`maxTradeSzs`, `availableToTrade`, `markPx`) are the upstream values for the mainnet account. With no stored setting, or a coin HyPaper cannot resolve, the upstream answer is returned unchanged |
 
 **Proxied to real HL (live market data):**
 

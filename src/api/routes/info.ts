@@ -7,6 +7,7 @@ import { getUserFills, getUserFillsByTime } from '../../engine/fill.js';
 import { getUserFunding } from '../../engine/funding-history.js';
 import { logger } from '../../utils/logger.js';
 import { ensureAccount } from '../middleware/auth.js';
+import { resolveCoinAsset } from '../../engine/asset.js';
 
 export const infoRouter = new Hono();
 
@@ -166,6 +167,10 @@ infoRouter.post('/', async (c) => {
         return c.json({ coin: body.coin, ctx });
       }
 
+      case 'activeAssetData': {
+        return activeAssetData(c, body);
+      }
+
       default: {
         // Try to proxy unknown types to HL (with default TTL)
         return cachedProxyToHL(c, body);
@@ -178,12 +183,17 @@ infoRouter.post('/', async (c) => {
 });
 
 async function cachedProxyToHL(c: any, body: Record<string, unknown>) {
+  return c.json(await fetchProxied(body));
+}
+
+/** The upstream HL `/info` answer for `body`, through the proxy cache. */
+async function fetchProxied(body: Record<string, unknown>): Promise<unknown> {
   const key = getCacheKey(body);
   const now = Date.now();
 
   const cached = proxyCache.get(key);
   if (cached && cached.expiry > now) {
-    return c.json(cached.data);
+    return cached.data;
   }
 
   const res = await fetch(`${config.HL_API_URL}/info`, {
@@ -204,5 +214,60 @@ async function cachedProxyToHL(c: any, body: Record<string, unknown>) {
     }
   }
 
-  return c.json(data);
+  return data;
+}
+
+function isUpstreamActiveAssetData(value: unknown, coin: string): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const pair = (v: unknown) => Array.isArray(v) && v.length === 2;
+  return (
+    typeof value.user === 'string' &&
+    value.coin === coin &&
+    isRecord(value.leverage) &&
+    pair(value.maxTradeSzs) &&
+    pair(value.availableToTrade) &&
+    typeof value.markPx === 'string'
+  );
+}
+
+/**
+ * `activeAssetData`: the upstream answer, with `leverage` replaced by the paper
+ * setting stored by `updateLeverage` when HyPaper holds one for (user, coin). Every
+ * other field stays the upstream value (it describes the mainnet account). Without a
+ * stored setting, or for a coin HyPaper cannot resolve uniquely, the upstream answer is
+ * returned unchanged, as for any other proxied type.
+ */
+async function activeAssetData(c: any, body: Record<string, unknown>) {
+  const coin = body.coin;
+  const rawUser = body.user;
+  if (typeof coin !== 'string' || typeof rawUser !== 'string') {
+    return cachedProxyToHL(c, body);
+  }
+  const asset = await resolveCoinAsset(coin);
+  const stored = asset === null
+    ? null
+    : await redis.hgetall(KEYS.USER_LEV(rawUser.toLowerCase(), asset));
+  // Fall back to the proxy only when no setting is stored; a present but invalid
+  // setting refuses (it must never silently become the mainnet answer).
+  if (!stored || !Object.prototype.hasOwnProperty.call(stored, 'leverage')) {
+    return cachedProxyToHL(c, body);
+  }
+  const value = /^[1-9][0-9]*$/.test(String(stored.leverage)) ? Number(stored.leverage) : NaN;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    return c.json({ error: `stored leverage for ${coin} is not a positive integer` }, 502);
+  }
+  let upstream: unknown;
+  try {
+    upstream = await fetchProxied(body);
+  } catch (err) {
+    return c.json({ error: `upstream activeAssetData for ${coin} could not be decoded: ${String(err)}` }, 502);
+  }
+  if (!isUpstreamActiveAssetData(upstream, coin)) {
+    return c.json({ error: `upstream activeAssetData for ${coin} has an unexpected shape` }, 502);
+  }
+  const isCross = stored.isCross !== 'false';
+  const leverage = isCross
+    ? { type: 'cross', value }
+    : { type: 'isolated', value, rawUsd: stored.isolatedMargin ?? '0' };
+  return c.json({ ...upstream, leverage });
 }

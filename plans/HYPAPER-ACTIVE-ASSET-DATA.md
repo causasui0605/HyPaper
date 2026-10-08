@@ -10,7 +10,8 @@ Close out, ff-merge into hypaper main, hand the merged commit to the operator wh
 ## Milestones
 
 ### HYPAPER-ACTIVE-ASSET-DATA: `activeAssetData` reports the paper leverage setting
-- status: ready
+- status: implemented
+- result: 2026-10-08 — `activeAssetData.leverage` is answered from the stored paper setting; other fields and the no-setting path unchanged; malformed/undecodable upstream or an invalid stored value → 502. Cross-vendor Codex review approve 8/8 in cycle 2 (cycle 1: undecodable upstream and empty stored value). Gate: build PASS, 21 files / 320 tests.
 - numeric: false
 - context: `/info` proxies unknown request types to Hyperliquid, so `activeAssetData` returns the PAPER wallet's MAINNET
   default leverage (e.g. `{"type":"isolated","value":10,"rawUsd":"0.0"}`), never the setting a paper client stored with
@@ -34,17 +35,17 @@ Close out, ff-merge into hypaper main, hand the merged commit to the operator wh
     missing field is passed through as today).
   - No write path changes; `updateLeverage` and `topUpIsolatedOnlyMargin` are untouched.
 - acceptance:
-  - [ ] A stored isolated setting (leverage 2, isolatedMargin "0") on a builder-dex coin is returned as
+  - [x] A stored isolated setting (leverage 2, isolatedMargin "0") on a builder-dex coin is returned as
     `{"type":"isolated","value":2,"rawUsd":"0"}` with every other field equal to the upstream fixture (a captured real
     Hyperliquid `activeAssetData` response, committed as a test fixture).
-  - [ ] A stored cross setting on a main-dex coin returns `{"type":"cross","value":N}` (no `rawUsd`).
-  - [ ] A stored isolated setting with a non-zero `isolatedMargin` returns it verbatim as `rawUsd`.
-  - [ ] No stored setting, an unknown coin, and a coin present twice in `market:assetmap` each return the upstream body
+  - [x] A stored cross setting on a main-dex coin returns `{"type":"cross","value":N}` (no `rawUsd`).
+  - [x] A stored isolated setting with a non-zero `isolatedMargin` returns it verbatim as `rawUsd`.
+  - [x] No stored setting, an unknown coin, and a coin present twice in `market:assetmap` each return the upstream body
     unchanged (today's behaviour).
-  - [ ] A stored setting with an upstream body of the wrong shape returns 502 and no body is fabricated.
-  - [ ] The user address is matched case-insensitively (stored key lower-case, request mixed case).
-  - [ ] README documents that `activeAssetData.leverage` reflects the paper setting when one is stored.
-  - [ ] `npm run build` and `npm run test:run` pass.
+  - [x] A stored setting with an upstream body of the wrong shape returns 502 and no body is fabricated.
+  - [x] The user address is matched case-insensitively (stored key lower-case, request mixed case).
+  - [x] README documents that `activeAssetData.leverage` reflects the paper setting when one is stored.
+  - [x] `npm run build` and `npm run test:run` pass.
 - allowed_paths:
   - src/api/routes/info.ts
   - src/engine/asset.ts

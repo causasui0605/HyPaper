@@ -49,3 +49,43 @@ export async function getAssetMetadata(asset: number): Promise<AssetMetadata | n
     onlyIsolated: entry.onlyIsolated,
   };
 }
+
+/**
+ * The wire asset index of `coin`, or null when HyPaper cannot resolve it uniquely.
+ * Builder-dex coins (`dex:NAME`) resolve through `market:assetmap` (exactly one entry
+ * whose `coin` equals `coin`); main-dex coins resolve to their position in the stored
+ * main `meta` universe.
+ */
+export async function resolveCoinAsset(coin: string): Promise<number | null> {
+  if (typeof coin !== 'string' || coin.length === 0) return null;
+
+  if (coin.includes(':')) {
+    const entries = await redis.hgetall(KEYS.MARKET_ASSET_MAP);
+    const matches: number[] = [];
+    for (const [asset, raw] of Object.entries(entries ?? {}) as Array<[string, unknown]>) {
+      if (typeof raw !== 'string') continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (
+        typeof parsed === 'object' && parsed !== null &&
+        (parsed as { coin?: unknown }).coin === coin
+      ) {
+        const index = Number(asset);
+        if (Number.isSafeInteger(index) && index >= BUILDER_DEX_ASSET_BASE) matches.push(index);
+      }
+    }
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  const metaRaw = await redis.get(KEYS.MARKET_META);
+  if (!metaRaw) return null;
+  const meta: HlMeta = JSON.parse(metaRaw);
+  const indexes = meta.universe
+    .map((entry, index) => (entry.name === coin ? index : -1))
+    .filter((index) => index >= 0);
+  return indexes.length === 1 ? indexes[0] : null;
+}
