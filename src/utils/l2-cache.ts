@@ -1,5 +1,5 @@
-import { config } from '../config.js';
 import { logger } from './logger.js';
+import { HL_L2_BOOK_TIMEOUT_MS, postHlInfo } from '../worker/hl-upstream.js';
 
 export interface L2Level {
   px: string;
@@ -22,21 +22,23 @@ const CACHE_TTL_MS = 2000;
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<HlL2Book | null>>();
 
+/**
+ * Fetch one L2 book from HL, bounded by HL_L2_BOOK_TIMEOUT_MS. A timed-out,
+ * non-OK, non-JSON or malformed answer returns null (the caller's existing
+ * fallback) and is never cached.
+ */
 async function fetchL2Book(coin: string): Promise<HlL2Book | null> {
   try {
-    const res = await fetch(`${config.HL_API_URL}/info`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'l2Book', coin }),
-    });
-    if (!res.ok) {
-      logger.warn({ coin, status: res.status }, 'L2 book fetch failed');
+    const data = await postHlInfo({ type: 'l2Book', coin }, HL_L2_BOOK_TIMEOUT_MS);
+    const levels = (data as { levels?: unknown } | null)?.levels;
+    if (!Array.isArray(levels) || levels.length !== 2
+      || !Array.isArray(levels[0]) || !Array.isArray(levels[1])) {
+      logger.warn({ coin }, 'L2 book response is malformed');
       return null;
     }
-    const data = (await res.json()) as { levels: [[{ px: string; sz: string; n: number }], [{ px: string; sz: string; n: number }]] };
     return {
       coin,
-      levels: data.levels as [L2Level[], L2Level[]],
+      levels: levels as [L2Level[], L2Level[]],
       time: Date.now(),
     };
   } catch (err) {

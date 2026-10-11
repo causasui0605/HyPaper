@@ -1,13 +1,18 @@
 import { Hono } from 'hono';
 import { redis } from '../../store/redis.js';
 import { KEYS } from '../../store/keys.js';
-import { config } from '../../config.js';
 import { getClearinghouseState, getOpenOrders, getFrontendOpenOrders, getOrderStatus } from '../../engine/position.js';
 import { getUserFills, getUserFillsByTime } from '../../engine/fill.js';
 import { getUserFunding } from '../../engine/funding-history.js';
 import { logger } from '../../utils/logger.js';
 import { ensureAccount } from '../middleware/auth.js';
 import { resolveCoinAsset } from '../../engine/asset.js';
+import {
+  HL_PROXY_TIMEOUT_MS,
+  HlUpstreamError,
+  postHlInfo,
+  upstreamErrorStatus,
+} from '../../worker/hl-upstream.js';
 
 export const infoRouter = new Hono();
 
@@ -183,10 +188,22 @@ infoRouter.post('/', async (c) => {
 });
 
 async function cachedProxyToHL(c: any, body: Record<string, unknown>) {
-  return c.json(await fetchProxied(body));
+  try {
+    return c.json(await fetchProxied(body));
+  } catch (err) {
+    if (err instanceof HlUpstreamError) {
+      logger.warn({ err, type: body.type }, 'Upstream HL proxy failed');
+      return c.json({ error: err.message }, upstreamErrorStatus(err));
+    }
+    throw err;
+  }
 }
 
-/** The upstream HL `/info` answer for `body`, through the proxy cache. */
+/**
+ * The upstream HL `/info` answer for `body`, through the proxy cache. The fetch
+ * is bounded by HL_PROXY_TIMEOUT_MS and a failed, non-JSON or timed-out upstream
+ * throws `HlUpstreamError`; nothing is cached on failure.
+ */
 async function fetchProxied(body: Record<string, unknown>): Promise<unknown> {
   const key = getCacheKey(body);
   const now = Date.now();
@@ -196,12 +213,7 @@ async function fetchProxied(body: Record<string, unknown>): Promise<unknown> {
     return cached.data;
   }
 
-  const res = await fetch(`${config.HL_API_URL}/info`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const rawData = await res.json();
+  const rawData = await postHlInfo(body, HL_PROXY_TIMEOUT_MS);
   const data = normalizeBuilderDexOnlyIsolated(body, rawData);
 
   const ttl = PROXY_TTL[body.type as string] ?? DEFAULT_PROXY_TTL;
@@ -260,7 +272,8 @@ async function activeAssetData(c: any, body: Record<string, unknown>) {
   try {
     upstream = await fetchProxied(body);
   } catch (err) {
-    return c.json({ error: `upstream activeAssetData for ${coin} could not be decoded: ${String(err)}` }, 502);
+    const status = err instanceof HlUpstreamError ? upstreamErrorStatus(err) : 502;
+    return c.json({ error: `upstream activeAssetData for ${coin} could not be decoded: ${String(err)}` }, status);
   }
   if (!isUpstreamActiveAssetData(upstream, coin)) {
     return c.json({ error: `upstream activeAssetData for ${coin} has an unexpected shape` }, 502);

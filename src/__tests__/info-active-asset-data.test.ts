@@ -229,9 +229,10 @@ describe('activeAssetData answers the paper leverage setting', () => {
     const user = '0x7e0e000000000000000000000000000000000a14';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not json', { status: 200 }));
 
-    const { status } = await ask(user, 'xyz:TSM');
+    const { status, body } = await ask(user, 'xyz:TSM');
 
-    // Unchanged: the same unhandled-rejection 500 as any other proxied type with a bad body.
-    expect(status).toBe(500);
+    // The same clear upstream 502 as any other proxied type with a non-JSON body.
+    expect(status).toBe(502);
+    expect(body).toEqual({ error: expect.stringContaining('non-JSON content type') });
   });
 });

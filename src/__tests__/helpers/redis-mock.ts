@@ -296,6 +296,21 @@ class PipelineMock {
     return this;
   }
 
+  hgetall(key: string): this {
+    this.commands.push(() => this.redis.hgetall(key));
+    return this;
+  }
+
+  get(key: string): this {
+    this.commands.push(() => this.redis.get(key));
+    return this;
+  }
+
+  lpos(key: string, value: string): this {
+    this.commands.push(() => this.redis.lpos(key, value));
+    return this;
+  }
+
   sadd(key: string, ...members: string[]): this {
     this.commands.push(() => this.redis.sadd(key, ...members));
     return this;
@@ -326,11 +341,16 @@ class PipelineMock {
     return this;
   }
 
-  async exec(): Promise<Array<[null, unknown]>> {
-    const results: Array<[null, unknown]> = [];
+  // Like ioredis: a command-level error is returned in its own slot, it does
+  // not reject the whole exec().
+  async exec(): Promise<Array<[Error | null, unknown]>> {
+    const results: Array<[Error | null, unknown]> = [];
     for (const cmd of this.commands) {
-      const result = await cmd();
-      results.push([null, result]);
+      try {
+        results.push([null, await cmd()]);
+      } catch (error) {
+        results.push([error instanceof Error ? error : new Error(String(error)), null]);
+      }
     }
     return results;
   }

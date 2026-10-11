@@ -9,6 +9,7 @@ import { OrderMatcher } from './order-matcher.js';
 import { FundingWorker } from './funding-worker.js';
 import type { HlMeta, HlAssetCtx } from '../types/hl.js';
 import { mainDexMarkSubscriptions } from '../engine/asset.js';
+import { HL_MARKET_SEED_TIMEOUT_MS, postHlInfo } from './hl-upstream.js';
 
 export const eventBus = new EventEmitter();
 
@@ -81,23 +82,17 @@ export class Worker {
    * per-coin ctx and mids. Fails loud: an unknown dex name aborts startup.
    */
   private async seedExtraDex(dex: string): Promise<void> {
-    const dexsRes = await fetch(`${config.HL_API_URL}/info`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'perpDexs' }),
-    });
-    const perpDexs = await dexsRes.json() as Array<{ name?: string } | null>;
+    const perpDexs = await postHlInfo(
+      { type: 'perpDexs' }, HL_MARKET_SEED_TIMEOUT_MS,
+    ) as Array<{ name?: string } | null>;
     const dexIndex = perpDexs.findIndex((d) => d?.name === dex);
     if (dexIndex < 1) {
       throw new Error(`builder dex ${dex} not present in perpDexs listing`);
     }
 
-    const ctxRes = await fetch(`${config.HL_API_URL}/info`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'metaAndAssetCtxs', dex }),
-    });
-    const [dexMeta, assetCtxs] = await ctxRes.json() as [HlMeta, HlAssetCtx[]];
+    const [dexMeta, assetCtxs] = await postHlInfo(
+      { type: 'metaAndAssetCtxs', dex }, HL_MARKET_SEED_TIMEOUT_MS,
+    ) as [HlMeta, HlAssetCtx[]];
 
     const mids: Record<string, string> = {};
     const registry = redis.pipeline();
@@ -135,22 +130,14 @@ export class Worker {
   private async seedMarketData(): Promise<HlMeta> {
     try {
       // Fetch meta (universe info)
-      const metaRes = await fetch(`${config.HL_API_URL}/info`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'meta' }),
-      });
-      const meta: HlMeta = await metaRes.json() as HlMeta;
+      const meta: HlMeta = await postHlInfo({ type: 'meta' }, HL_MARKET_SEED_TIMEOUT_MS) as HlMeta;
       await redis.set(KEYS.MARKET_META, JSON.stringify(meta));
       logger.info({ assets: meta.universe.length }, 'Seeded market meta');
 
       // Fetch metaAndAssetCtxs for initial prices
-      const ctxRes = await fetch(`${config.HL_API_URL}/info`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
-      });
-      const ctxData = await ctxRes.json() as [HlMeta, HlAssetCtx[]];
+      const ctxData = await postHlInfo(
+        { type: 'metaAndAssetCtxs' }, HL_MARKET_SEED_TIMEOUT_MS,
+      ) as [HlMeta, HlAssetCtx[]];
       const assetCtxs = ctxData[1];
 
       // Build initial mids from the best live price available.
@@ -179,12 +166,7 @@ export class Worker {
       await this.priceUpdater.seedMids(mids);
 
       // Fetch allMids for current mid prices
-      const midsRes = await fetch(`${config.HL_API_URL}/info`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'allMids' }),
-      });
-      const allMids = await midsRes.json() as Record<string, string>;
+      const allMids = await postHlInfo({ type: 'allMids' }, HL_MARKET_SEED_TIMEOUT_MS) as Record<string, string>;
       await this.priceUpdater.seedMids(allMids);
 
       for (const dex of extraDexList(config.EXTRA_DEXS)) {

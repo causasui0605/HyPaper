@@ -5,6 +5,7 @@ import { KEYS } from '../store/keys.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { D } from '../utils/math.js';
+import { HL_FUNDING_HISTORY_TIMEOUT_MS, postHlInfo } from './hl-upstream.js';
 import {
   PNL_FUNDING_CORRECTION_SCHEMA,
   PNL_FUNDING_EVENT_SCHEMA,
@@ -14,13 +15,33 @@ import {
   type PnlFundingEvent,
 } from '../types/pnl.js';
 
+/** The pipelined reads one funding attempt takes as its snapshot. */
+export interface FundingRedisPipeline {
+  hgetall(key: string): unknown;
+  get(key: string): unknown;
+  lpos(key: string, element: string): unknown;
+  exec(): Promise<Array<[Error | null, unknown]> | null>;
+}
+
 export interface FundingRedis {
   smembers(key: string): Promise<string[]>;
   srem(key: string, ...members: string[]): Promise<number>;
   hgetall(key: string): Promise<Record<string, string>>;
   get(key: string): Promise<string | null>;
   eval(script: string, numberOfKeys: number, ...args: string[]): Promise<unknown>;
+  pipeline(): FundingRedisPipeline;
 }
+
+/**
+ * Freshness bound for a scheduled attempt's market context. A position's
+ * `market:ctx:<coin>` is admissible for boundary T iff
+ * `T <= observedAt <= T + FUNDING_CONTEXT_WINDOW_MS`. The bound is fixed and is
+ * required (at start) to exceed FUNDING_MAX_LATE_MS, the last instant any
+ * attempt for T may start, so a context observed during any attempt of the
+ * boundary's retry window is admissible; one observed before T (stale) or after
+ * the bound is refused. The context is read once per attempt (see applyFunding).
+ */
+export const FUNDING_CONTEXT_WINDOW_MS = 120_000;
 
 export interface FundingCorrectionInput {
   userId: string;
@@ -62,32 +83,36 @@ const defaultDependencies: FundingDependencies = {
   now: Date.now,
   setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimer: (timer) => clearTimeout(timer),
-  fundingRateAt: async (coin, fundingTime) => {
-    const response = await fetch(`${config.HL_API_URL}/info`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'fundingHistory',
-        coin,
-        startTime: fundingTime,
-        endTime: fundingTime + config.FUNDING_INTERVAL_MS - 1,
-      }),
-    });
-    if (!response.ok) throw new Error(`funding history request failed with ${response.status}`);
-    const payload: unknown = await response.json();
-    if (!Array.isArray(payload)) throw new Error('funding history response is malformed');
-    const matches = payload.filter((row): row is { time: number; fundingRate: string } => {
-      if (typeof row !== 'object' || row === null) return false;
-      const candidate = row as Record<string, unknown>;
-      return Number.isSafeInteger(candidate.time)
-        && typeof candidate.fundingRate === 'string'
-        && Math.floor(Number(candidate.time) / config.FUNDING_INTERVAL_MS)
-          * config.FUNDING_INTERVAL_MS === fundingTime;
-    });
-    if (matches.length !== 1) throw new Error('funding history boundary is missing or ambiguous');
-    return { rate: matches[0].fundingRate, observedTime: matches[0].time };
-  },
+  fundingRateAt: (coin, fundingTime) => fetchFundingRateAt(coin, fundingTime),
 };
+
+/**
+ * The venue's realized funding rate for one boundary, from HL `fundingHistory`.
+ * Bounded by HL_FUNDING_HISTORY_TIMEOUT_MS; a timed-out, non-OK or non-JSON
+ * upstream throws `HlUpstreamError`, a malformed or ambiguous payload throws.
+ */
+export async function fetchFundingRateAt(coin: string, fundingTime: number): Promise<{
+  rate: string;
+  observedTime: number;
+}> {
+  const payload = await postHlInfo({
+    type: 'fundingHistory',
+    coin,
+    startTime: fundingTime,
+    endTime: fundingTime + config.FUNDING_INTERVAL_MS - 1,
+  }, HL_FUNDING_HISTORY_TIMEOUT_MS);
+  if (!Array.isArray(payload)) throw new Error('funding history response is malformed');
+  const matches = payload.filter((row): row is { time: number; fundingRate: string } => {
+    if (typeof row !== 'object' || row === null) return false;
+    const candidate = row as Record<string, unknown>;
+    return Number.isSafeInteger(candidate.time)
+      && typeof candidate.fundingRate === 'string'
+      && Math.floor(Number(candidate.time) / config.FUNDING_INTERVAL_MS)
+        * config.FUNDING_INTERVAL_MS === fundingTime;
+  });
+  if (matches.length !== 1) throw new Error('funding history boundary is missing or ambiguous');
+  return { rate: matches[0].fundingRate, observedTime: matches[0].time };
+}
 
 const luaEnvelopeSchema = z.object({
   state: z.enum(['applied', 'retry', 'refused']),
@@ -255,6 +280,71 @@ function sameCorrectionInputs(
     && JSON.stringify(stored.source) === JSON.stringify(input.source);
 }
 
+type SnapshotResult = { error: Error | null; value: unknown };
+
+/**
+ * Execute a read pipeline and return each command's outcome individually. A
+ * command-level error (e.g. WRONGTYPE on one key) is returned with its slot, not
+ * thrown, so it fails only the position(s) that depend on that slot. Only a
+ * missing or incomplete pipeline result aborts the whole attempt.
+ */
+async function execSnapshot(
+  pipeline: FundingRedisPipeline,
+  expected: number,
+  label: string,
+): Promise<SnapshotResult[]> {
+  const results = await pipeline.exec();
+  if (!results || results.length !== expected) {
+    throw new Error(`funding ${label} returned an incomplete pipeline result`);
+  }
+  return results.map(([error, value]) => ({
+    error: error ? new Error(`funding ${label} failed: ${error.message}`) : null,
+    value,
+  }));
+}
+
+function snapshotValue(result: SnapshotResult | undefined, label: string): unknown {
+  if (!result) throw new Error(`funding ${label} result is missing`);
+  if (result.error) throw result.error;
+  return result.value;
+}
+
+/**
+ * Validate an already-recorded funding event before skipping its position: the
+ * stored bytes must be a well-formed event for exactly this (user, asset, coin,
+ * fundingTime) and present in the immutable ledger index. Every nonvolatile
+ * identity field is checked (user via the eventId digest and key, asset, coin,
+ * fundingTime); a mismatch is a conflict, never a skip. Volatile inputs (oracle
+ * price, rate, context observation time, size) are deliberately not compared.
+ */
+function requireRecordedEvent(
+  userId: string,
+  asset: number,
+  coin: string | undefined,
+  fundingTime: number,
+  raw: unknown,
+  indexPosition: unknown,
+): void {
+  const eventId = pnlFundingEventId(userId, asset, fundingTime);
+  if (typeof raw !== 'string') throw new Error(`recorded funding event ${eventId} has wrong type`);
+  let stored: PnlFundingEvent;
+  try {
+    stored = pnlFundingEventSchema.parse(JSON.parse(raw));
+  } catch {
+    throw new Error(`recorded funding event ${eventId} is malformed`);
+  }
+  if (!coin) throw new Error(`active position ${asset} is missing coin`);
+  if (stored.eventId !== eventId
+    || stored.asset !== asset
+    || stored.coin !== coin
+    || stored.fundingTime !== fundingTime) {
+    throw new Error(`recorded funding event ${eventId} identity conflicts`);
+  }
+  if (typeof indexPosition !== 'number') {
+    throw new Error('funding event exists without immutable ledger index');
+  }
+}
+
 export class FundingWorker {
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
   private running = false;
@@ -278,6 +368,9 @@ export class FundingWorker {
     if (config.FUNDING_APPLY_DELAY_MS >= config.FUNDING_MAX_LATE_MS
       || config.FUNDING_MAX_LATE_MS >= config.FUNDING_INTERVAL_MS) {
       throw new Error('funding timing configuration is inconsistent');
+    }
+    if (config.FUNDING_MAX_LATE_MS >= FUNDING_CONTEXT_WINDOW_MS) {
+      throw new Error('FUNDING_MAX_LATE_MS must be below the funding context freshness window');
     }
   }
 
@@ -602,56 +695,146 @@ export class FundingWorker {
     if (userIds.length === 0) return;
 
     const errors: Error[] = [];
+    const refuse = (error: unknown, userId: string, assetStr: string): void => {
+      const err = error instanceof Error ? error : new Error(String(error));
+      errors.push(err);
+      logger.error({ err, userId, asset: assetStr, fundingTime }, 'Funding position refused');
+    };
+
+    const items: Array<{ userId: string; asset: number; assetStr: string }> = [];
     for (const userId of userIds) {
       const assets = await this.dependencies.redis.smembers(KEYS.USER_POSITIONS(userId));
       if (assets.length === 0) {
         await this.dependencies.redis.srem(KEYS.USERS_ACTIVE, userId);
         continue;
       }
-
       for (const assetStr of assets) {
-        try {
-          const asset = Number(assetStr);
-          if (!Number.isSafeInteger(asset) || asset < 0 || String(asset) !== assetStr) {
-            throw new Error(`invalid active position asset ${assetStr}`);
-          }
-          const position = await this.dependencies.redis.hgetall(KEYS.USER_POS(userId, asset));
-          const coin = position.coin;
-          if (!coin) throw new Error(`active position ${asset} is missing coin`);
-          const context = await this.dependencies.redis.hgetall(KEYS.MARKET_CTX(coin));
-          if (!context.funding) throw new Error(`active position ${coin} is missing funding rate`);
-          if (!context.oraclePx) throw new Error(`active position ${coin} is missing oracle price`);
-          if (requireFreshContext) {
-            const observedAt = Number(context.observedAt);
-            if (!Number.isSafeInteger(observedAt) || observedAt < fundingTime || observedAt > appliedAt) {
-              throw new Error(`active position ${coin} market context is not fresh for the boundary`);
-            }
-          }
-          const boundaryRate = requireFreshContext
-            ? await this.dependencies.fundingRateAt(coin, fundingTime)
-            : null;
-          await this.applyFundingEvent({
-            userId,
-            asset,
-            coin,
-            fundingTime,
-            appliedAt,
-            expectedSzi: position.szi ?? '',
-            oraclePx: context.oraclePx,
-            fundingRate: boundaryRate?.rate ?? context.funding,
-            source: boundaryRate === null
-              ? { kind: 'live_market_context' }
-              : {
-                kind: 'live_boundary_snapshot',
-                fundingHistoryTime: boundaryRate.observedTime,
-                contextObservedAt: Number(context.observedAt),
-              },
-          });
-        } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error));
-          errors.push(err);
-          logger.error({ err, userId, asset: assetStr, fundingTime }, 'Funding position refused');
+        const asset = Number(assetStr);
+        if (!Number.isSafeInteger(asset) || asset < 0 || String(asset) !== assetStr) {
+          refuse(new Error(`invalid active position asset ${assetStr}`), userId, assetStr);
+          continue;
         }
+        items.push({ userId, asset, assetStr });
+      }
+    }
+
+    // One pipelined read: every position hash plus any event already recorded for
+    // this (user, asset, fundingTime). An existing event is skipped here, before
+    // any input is computed or compared, so a retry never re-derives volatile
+    // inputs (oracle price, context observation time) for an applied boundary.
+    const positionReads = this.dependencies.redis.pipeline();
+    for (const item of items) {
+      const eventId = pnlFundingEventId(item.userId, item.asset, fundingTime);
+      positionReads.hgetall(KEYS.USER_POS(item.userId, item.asset));
+      positionReads.get(KEYS.PNL_FUNDING_EVENT(item.userId, eventId));
+      positionReads.lpos(KEYS.PNL_FUNDING_EVENTS(item.userId), eventId);
+    }
+    const positionResults = items.length === 0
+      ? []
+      : await execSnapshot(positionReads, items.length * 3, 'position snapshot');
+    const pending: Array<{ userId: string; asset: number; assetStr: string; coin: string }> = [];
+    items.forEach((item, index) => {
+      try {
+        const position = snapshotValue(
+          positionResults[index * 3], 'position snapshot',
+        ) as Record<string, string> | null;
+        const existing = snapshotValue(positionResults[index * 3 + 1], 'position snapshot');
+        if (position !== null && (typeof position !== 'object' || Array.isArray(position))) {
+          throw new Error(`active position ${item.asset} has wrong type`);
+        }
+        if (existing !== null && existing !== undefined) {
+          if (position?.userId !== item.userId || position?.asset !== item.assetStr) {
+            throw new Error(`active position ${item.asset} identity conflicts`);
+          }
+          requireRecordedEvent(
+            item.userId,
+            item.asset,
+            position?.coin,
+            fundingTime,
+            existing,
+            snapshotValue(positionResults[index * 3 + 2], 'position snapshot'),
+          );
+          logger.debug({ userId: item.userId, asset: item.asset, fundingTime }, 'Funding already recorded');
+          return;
+        }
+        const coin = position?.coin;
+        if (!coin) throw new Error(`active position ${item.asset} is missing coin`);
+        pending.push({ ...item, coin });
+      } catch (error) {
+        refuse(error, item.userId, item.assetStr);
+      }
+    });
+
+    // One pipelined snapshot of every needed market context, taken before the
+    // loop, so admissibility never depends on a position's place in the loop.
+    const coins = [...new Set(pending.map((item) => item.coin))];
+    const contextReads = this.dependencies.redis.pipeline();
+    for (const coin of coins) contextReads.hgetall(KEYS.MARKET_CTX(coin));
+    const contextResults = coins.length === 0
+      ? []
+      : await execSnapshot(contextReads, coins.length, 'market context snapshot');
+    // A failed context command fails only the positions on that coin (refused
+    // in the loop below); every other coin's positions proceed.
+    const contexts = new Map<string, Record<string, string> | Error>();
+    coins.forEach((coin, index) => {
+      const result = contextResults[index];
+      if (!result) {
+        contexts.set(coin, new Error(`funding market context snapshot result for ${coin} is missing`));
+      } else if (result.error) {
+        contexts.set(coin, result.error);
+      } else {
+        contexts.set(coin, (result.value ?? {}) as Record<string, string>);
+      }
+    });
+
+    const boundaryRates = new Map<string, Promise<{ rate: string; observedTime: number }>>();
+    const boundaryRate = (coin: string) => {
+      let rate = boundaryRates.get(coin);
+      if (!rate) {
+        rate = this.dependencies.fundingRateAt(coin, fundingTime);
+        boundaryRates.set(coin, rate);
+      }
+      return rate;
+    };
+
+    for (const { userId, asset, assetStr } of pending) {
+      try {
+        const position = await this.dependencies.redis.hgetall(KEYS.USER_POS(userId, asset));
+        const coin = position.coin;
+        if (!coin) throw new Error(`active position ${asset} is missing coin`);
+        const context = contexts.get(coin);
+        if (!context) throw new Error(`active position ${coin} is not in the attempt context snapshot`);
+        if (context instanceof Error) throw context;
+        if (!context.funding) throw new Error(`active position ${coin} is missing funding rate`);
+        if (!context.oraclePx) throw new Error(`active position ${coin} is missing oracle price`);
+        if (requireFreshContext) {
+          const observedAt = Number(context.observedAt);
+          if (!Number.isSafeInteger(observedAt)
+            || observedAt < fundingTime
+            || observedAt > fundingTime + FUNDING_CONTEXT_WINDOW_MS) {
+            throw new Error(`active position ${coin} market context is not fresh for the boundary`);
+          }
+        }
+        const rate = requireFreshContext ? await boundaryRate(coin) : null;
+        await this.applyFundingEvent({
+          userId,
+          asset,
+          coin,
+          fundingTime,
+          appliedAt,
+          expectedSzi: position.szi ?? '',
+          oraclePx: context.oraclePx,
+          fundingRate: rate?.rate ?? context.funding,
+          source: rate === null
+            ? { kind: 'live_market_context' }
+            : {
+              kind: 'live_boundary_snapshot',
+              fundingHistoryTime: rate.observedTime,
+              contextObservedAt: Number(context.observedAt),
+            },
+        });
+      } catch (error) {
+        refuse(error, userId, assetStr);
       }
     }
     if (errors.length > 0) {
