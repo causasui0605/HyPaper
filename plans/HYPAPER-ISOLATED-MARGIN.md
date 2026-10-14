@@ -29,8 +29,12 @@ deploys to the Mac and Tokyo HyPaper in an agreed window (never during a held En
     the position side — amended 2026-10-14: Hyperliquid's Python SDK always sends `isBuy: true`, so a side check would
     refuse calls Hyperliquid accepts); an add larger than the free (withdrawable) balance; a removal that would leave the
     position's isolated margin below the transfer requirement max(initial margin at the stored leverage =
-    |szi| × mark / leverage, 10% × |szi| × mark) — Hyperliquid's documented transfer margin requirement; the
-    implementer confirms the rule against the Hyperliquid docs and records the source in the plan result; no finite
+    |szi| × mark / leverage, 10% × |szi| × mark) — Hyperliquid's documented transfer margin requirement — CONFIRMED 2026-10-14 by the orchestrator against
+    https://hyperliquid.gitbook.io/hyperliquid-docs/trading/margining: "The margin remaining must also meet the initial
+    margin requirement, i.e. `transfer_margin_required = max(initial_margin_required, 0.1 * total_position_value)`" and
+    "'transferring' includes any action that removes margin from a position, other than trading. Examples include
+    withdrawals, transfer to spot wallet, and isolated margin transfers." Applied per isolated position (its own
+    margin vs its own initial margin at the stored leverage and 10% of its own notional at mark); no finite
     positive mark price.
   - Effects on success, atomically (one Redis transaction or a Lua script, as the other margin writes): the position's
     isolated margin changes by ntli/1e6 exactly (decimal string arithmetic, no float), the free balance by the opposite;
