@@ -84,6 +84,14 @@ export interface HlTopUpIsolatedOnlyMarginAction {
   leverage: string;
 }
 
+export interface HlUpdateIsolatedMarginAction {
+  type: 'updateIsolatedMargin';
+  asset: number;
+  isBuy: boolean;
+  /** Signed USD amount x 1e6: positive adds isolated margin, negative removes it. */
+  ntli: number;
+}
+
 export type HlExchangeAction =
   | HlOrderAction
   | HlCancelAction
@@ -91,7 +99,8 @@ export type HlExchangeAction =
   | HlModifyAction
   | HlBatchModifyAction
   | HlUpdateLeverageAction
-  | HlTopUpIsolatedOnlyMarginAction;
+  | HlTopUpIsolatedOnlyMarginAction
+  | HlUpdateIsolatedMarginAction;
 
 // === Info request types ===
 

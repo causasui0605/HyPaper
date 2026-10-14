@@ -11,7 +11,13 @@ deploys to the Mac and Tokyo HyPaper in an agreed window (never during a held En
 ## Milestones
 
 ### HYPAPER-ISOLATED-MARGIN: the `updateIsolatedMargin` exchange action
-- status: ready (2026-10-14)
+- status: implemented (2026-10-14)
+- result: cross-vendor approve 5/5 at cycle 11 (dylan extended the cap three times: cycles 3-5, 6-7, 8-10, 11-13). The cycles
+  tightened operand validation (strict bounded decimals for every accounting figure, finite checks, no substitution),
+  exact 1000-digit authorization of the actual committed change, a 60-place derived reservation, a read-back bound on
+  committed values, and isBuy unchecked against side (HL SDK). The Lua compare-and-set was exercised once against a
+  real redis:7-alpine by the orchestrator (non-blocking: make that a repeatable integration test). Gate: build PASS,
+  376 tests.
 - numeric: true (margin arithmetic decides refusals; hand-checkable expectations)
 - requested by: tholos StatArb_EQ (registration §8a daily margin maintenance moves isolated margin toward
   |notional|/2) and, later, Energy Roll's isolated NATGAS leg. The paper path must equal testnet/mainnet (§11.5), so

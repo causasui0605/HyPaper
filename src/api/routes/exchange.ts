@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
 import { placeOrders, cancelOrders, cancelByCloid, updateLeverage } from '../../engine/order.js';
-import { topUpIsolatedOnlyMargin } from '../../engine/margin.js';
+import {
+  IsolatedMarginRefusal,
+  topUpIsolatedOnlyMargin,
+  updateIsolatedMargin,
+} from '../../engine/margin.js';
 import { ensureAccount } from '../middleware/auth.js';
 import { logger } from '../../utils/logger.js';
 import type { HlExchangeAction } from '../../types/hl.js';
@@ -119,6 +123,27 @@ exchangeRouter.post('/', async (c) => {
         }
 
         await topUpIsolatedOnlyMargin(wallet, action.asset, action.leverage);
+        return c.json({
+          status: 'ok',
+          response: { type: 'default' },
+        });
+      }
+
+      case 'updateIsolatedMargin': {
+        // Every refusal is HL's shape (`status: err`) and writes nothing; the engine
+        // validates isBuy and ntli so a malformed wire value refuses the same way.
+        try {
+          const moved = await updateIsolatedMargin(wallet, action.asset, action.isBuy, action.ntli);
+          logger.info(
+            { user: wallet, asset: action.asset, ntli: action.ntli, ...moved },
+            'updateIsolatedMargin applied',
+          );
+        } catch (err) {
+          if (err instanceof IsolatedMarginRefusal) {
+            return c.json({ status: 'err', response: err.message });
+          }
+          throw err;
+        }
         return c.json({
           status: 'ok',
           response: { type: 'default' },
