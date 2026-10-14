@@ -36,6 +36,12 @@ deploys to the Mac and Tokyo HyPaper in an agreed window (never during a held En
     withdrawals, transfer to spot wallet, and isolated margin transfers." Applied per isolated position (its own
     margin vs its own initial margin at the stored leverage and 10% of its own notional at mark); no finite
     positive mark price.
+  - Current margin (amended 2026-10-14 during review, orchestrator): the position's stored isolated margin; when none
+    is stored (0 or absent), the derived reservation notional / leverage taken at 60 decimal places (half up) — the
+    same value the account's margin-used total counts. The committed margin is exactly current + ntli/1e6. Accepted
+    account figures are bounded (|x| < 1e30, at most 60 decimal places, at most 200 characters, exponent at most 99);
+    a commit whose result would fall outside that bound is refused with no write, so every stored margin is readable
+    on the next update. Engine-written values (e.g. a fill's 30-significant-digit margin) are inside the bound.
   - Effects on success, atomically (one Redis transaction or a Lua script, as the other margin writes): the position's
     isolated margin changes by ntli/1e6 exactly (decimal string arithmetic, no float), the free balance by the opposite;
     `clearinghouseState` (marginUsed, liquidationPx, leverage.rawUsd) and `activeAssetData` (leverage.rawUsd) reflect the
