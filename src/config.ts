@@ -17,6 +17,11 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   WS_RECONNECT_MIN_MS: z.coerce.number().default(1000),
   WS_RECONNECT_MAX_MS: z.coerce.number().default(30000),
+  // Watchdog: a socket with no inbound message (data or pong) for this long
+  // is treated as half-open, terminated and reconnected.
+  WS_SILENCE_MS: z.coerce.number().int().positive().default(30_000),
+  // Interval of the application-level {"method":"ping"} heartbeat.
+  WS_PING_MS: z.coerce.number().int().positive().default(20_000),
   RATE_LIMIT_MAX: z.coerce.number().default(120),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60_000),
   FEES_ENABLED: z.coerce.boolean().default(true),
@@ -64,6 +69,9 @@ const envSchema = z.object({
   // belt in addition to the per-dex allMids WS subscription).
   EXTRA_DEX_CTX_REFRESH_MS: z.coerce.number().default(15_000),
 }).superRefine((value, ctx) => {
+  if (value.WS_PING_MS >= value.WS_SILENCE_MS) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['WS_PING_MS'], message: 'WS_PING_MS must be below WS_SILENCE_MS' });
+  }
   if (!value.CASH_LEDGER_EVIDENCE_ENABLED && !value.CASH_LEDGER_EVIDENCE_V2_ENABLED) return;
   const required: Array<keyof typeof value> = [
     'HYPAPER_SOURCE_REVISION',

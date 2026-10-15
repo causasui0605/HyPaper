@@ -6,6 +6,32 @@ import type { HlAllMids, HlActiveAssetCtx, HlL2Book } from '../types/hl.js';
 
 export type PriceUpdateCallback = () => void;
 
+/**
+ * Redis hash of WS feed freshness. Field = subscription family, value = the
+ * epoch-ms arrival time of the latest WS update for that family:
+ *   `allMids`          main-dex allMids
+ *   `allMids:<dex>`    a builder dex's allMids (coins prefixed `<dex>:`)
+ *   `activeAssetCtx`   the main-dex mark (activeAssetCtx) subscriptions
+ * Only WS updates write it; HTTP seeding and polling never do, so a frozen
+ * socket shows up as an ageing timestamp.
+ */
+export const FEED_LAST_UPDATE_KEY = 'market:feeds:lastUpdate';
+
+const coinDex = (coin: string): string | null => {
+  const idx = coin.indexOf(':');
+  return idx > 0 ? coin.slice(0, idx) : null;
+};
+
+export const feedFamily = (channel: string, dex: string | null): string =>
+  dex ? `${channel}:${dex}` : channel;
+
+/** The families a worker with these extra dexs is expected to keep fresh. */
+export const expectedFeedFamilies = (extraDexs: string[]): string[] => [
+  'allMids',
+  ...extraDexs.map((dex) => feedFamily('allMids', dex)),
+  'activeAssetCtx',
+];
+
 export class PriceUpdater {
   private onUpdate: PriceUpdateCallback;
   private eventBus: EventEmitter;
@@ -42,6 +68,11 @@ export class PriceUpdater {
       args.push(coin, px);
     }
     pipeline.hset(KEYS.MARKET_MIDS, ...args);
+    const now = Date.now().toString();
+    const families = new Set(entries.map(([coin]) => feedFamily('allMids', coinDex(coin))));
+    const feedArgs: string[] = [];
+    for (const family of families) feedArgs.push(family, now);
+    pipeline.hset(FEED_LAST_UPDATE_KEY, ...feedArgs);
     await pipeline.exec();
 
     this.eventBus.emit('mids', { mids });
@@ -53,6 +84,7 @@ export class PriceUpdater {
 
     const ctx = data.ctx;
     const pipeline = redis.pipeline();
+    const now = Date.now().toString();
     pipeline.hset(KEYS.MARKET_CTX(data.coin),
       'markPx', ctx.markPx ?? '',
       'midPx', ctx.midPx ?? '',
@@ -62,8 +94,9 @@ export class PriceUpdater {
       'prevDayPx', ctx.prevDayPx ?? '',
       'dayNtlVlm', ctx.dayNtlVlm ?? '',
       'premium', ctx.premium ?? '',
-      'observedAt', Date.now().toString(),
+      'observedAt', now,
     );
+    pipeline.hset(FEED_LAST_UPDATE_KEY, feedFamily('activeAssetCtx', coinDex(data.coin)), now);
 
     const livePx = ctx.midPx ?? ctx.markPx;
     if (livePx) {

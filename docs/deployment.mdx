@@ -80,6 +80,8 @@ The Dockerfile uses a multi-stage build (node:22-alpine) that strips dev depende
 | `LOG_LEVEL` | `info` | No | Log level (debug, info, warn, error) |
 | `RATE_LIMIT_MAX` | `120` | No | Max requests per rate limit window |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | No | Rate limit window in ms |
+| `WS_SILENCE_MS` | `30000` | No | HL WebSocket silence watchdog: no message for this long terminates and reconnects the socket; also the `/health/feeds` stale threshold |
+| `WS_PING_MS` | `20000` | No | Interval of the `{"method":"ping"}` heartbeat; must be below `WS_SILENCE_MS` |
 
 ## Database setup
 

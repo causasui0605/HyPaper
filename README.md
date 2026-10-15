@@ -56,7 +56,17 @@ FEE_RATE_TAKER=0.00035
 FEE_RATE_MAKER=0.0001
 FUNDING_ENABLED=true
 FUNDING_INTERVAL_MS=28800000
+WS_SILENCE_MS=30000
+WS_PING_MS=20000
 ```
+
+`WS_SILENCE_MS` (default `30000`) is the HL WebSocket silence watchdog: if no
+message of any kind (data, subscription ack or `pong`) arrives for that long, the
+socket is treated as half-open, logged at `warn` (`HL WebSocket silent for N ms`),
+terminated, and reconnected through the normal backoff, re-sending every
+subscription. `WS_PING_MS` (default `20000`) is the interval of HL's
+application-level `{"method":"ping"}` heartbeat; it must be below
+`WS_SILENCE_MS` or startup fails.
 
 Bring your own Redis — any Redis 7+ works (local, Docker, Upstash, Redis Cloud, etc.).
 
@@ -97,7 +107,37 @@ Any string works as a wallet address — use your real `0x...` address, a test a
 
 ### `GET /health`
 
-Health check.
+Health check (process liveness only; it does not look at market data).
+
+### `GET /health/feeds`
+
+Read-only freshness of the HL WebSocket feeds. The worker writes the arrival
+time (epoch ms) of the latest WS update per subscription family into the redis
+hash `market:feeds:lastUpdate`; HTTP seeding and the builder-dex HTTP poll never
+write it. Families: `allMids` (main dex), `allMids:<dex>` (each `EXTRA_DEXS`
+entry), `activeAssetCtx` (main-dex mark subscriptions).
+
+```json
+{
+  "status": "ok",
+  "time": 1792060320000,
+  "staleAfterMs": 30000,
+  "feeds": {
+    "allMids": { "lastUpdateMs": 1792060319000, "ageMs": 1000, "stale": false },
+    "allMids:xyz": { "lastUpdateMs": 1792060318000, "ageMs": 2000, "stale": false },
+    "activeAssetCtx": { "lastUpdateMs": 1792060320000, "ageMs": 0, "stale": false }
+  },
+  "unexpected": {}
+}
+```
+
+A family is `stale` when `ageMs > staleAfterMs` (= `WS_SILENCE_MS`) or when it
+has never updated (`lastUpdateMs` and `ageMs` are `null`). If any family is
+stale, `status` is `"stale"` and the response is HTTP 503; otherwise 200.
+Nothing is synthesized for a stale feed. `feeds` holds exactly the families the
+current config expects; any other stored family (for example a dex since removed
+from `EXTRA_DEXS`) is listed under `unexpected` in the same shape and never
+affects `status` or the HTTP code.
 
 ### `POST /info`
 

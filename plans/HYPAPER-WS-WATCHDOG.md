@@ -1,6 +1,6 @@
 # HYPAPER-WS-WATCHDOG — a silent HL WebSocket is detected and reconnected
 
-- status: ready (2026-10-15)
+- status: done (2026-10-15; codex review cycle 2 approve 5/5, patch 8a4a733c)
 - found: on the AWS host, image im-21ceef2, the HL WebSocket went half-open at about 08:32Z on 10-15. Main-dex `allMids`, and every valuation that reads them (`clearinghouseState` accountValue, maintenance margin), stayed frozen for about 6 hours with no log line, while xyz kept moving because it is polled over HTTP every 15 s. The StatArb_Crypto PAPER book HALTed on the gap between its live-mark margin and HyPaper's frozen figure. A container restart at 14:31Z cleared it.
 - cause: `src/worker/ws-client.ts` reconnects only on a `close` or `error` event. It sends no heartbeat and does not track how long it has gone without a message, so a half-open TCP connection never triggers a reconnect.
 

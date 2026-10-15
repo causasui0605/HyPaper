@@ -4,6 +4,7 @@ import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { exchangeRouter } from './routes/exchange.js';
 import { infoRouter } from './routes/info.js';
 import { hypaperRouter } from './routes/hypaper.js';
+import { healthRouter } from './routes/health.js';
 import { logger } from '../utils/logger.js';
 
 export const app = new Hono();
@@ -22,6 +23,7 @@ app.onError((err, c) => {
 
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok', time: Date.now() }));
+app.route('/health', healthRouter);
 
 // Basic response for the bare API domain
 app.get('/', (c) => c.json({
